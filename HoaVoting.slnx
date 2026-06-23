@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HoaVoting.Api/HoaVoting.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HoaVoting.Tests/HoaVoting.Tests.csproj" />
+  </Folder>
+</Solution>

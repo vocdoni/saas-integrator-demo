@@ -1,0 +1,67 @@
+### HOA Voting — end-to-end walkthrough
+### Run the API first: dotnet run --project src/HoaVoting.Api
+@host = http://localhost:5095
+
+### 1. Admin login (seeded from Admin:Email / Admin:Password)
+# @name adminLogin
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "email": "admin@hoa.local", "password": "change-me" }
+
+@adminToken = {{adminLogin.response.body.token}}
+
+### 2. Admin creates an association + its owner (calls Vocdoni: create org)
+# @name createAssoc
+POST {{host}}/api/associations
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{ "name": "Maple Street HOA", "ownerEmail": "owner@maple.local", "ownerPassword": "owner-pw" }
+
+@assocId = {{createAssoc.response.body.id}}
+
+### 3. Owner logs in
+# @name ownerLogin
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "email": "owner@maple.local", "password": "owner-pw" }
+
+@ownerToken = {{ownerLogin.response.body.token}}
+
+### 4. Owner adds a homeowner (Vocdoni: add org member)
+POST {{host}}/api/associations/{{assocId}}/homeowners
+Content-Type: application/json
+Authorization: Bearer {{ownerToken}}
+
+{ "name": "Alice", "surname": "Doe", "email": "alice@maple.local", "memberNumber": "A-101", "weight": "1" }
+
+### 5. Owner lists homeowners
+GET {{host}}/api/associations/{{assocId}}/homeowners
+Authorization: Bearer {{ownerToken}}
+
+### 6. Owner creates a proposal (Vocdoni: census -> publish -> process -> publish)
+# @name createProposal
+POST {{host}}/api/associations/{{assocId}}/proposals
+Content-Type: application/json
+Authorization: Bearer {{ownerToken}}
+
+{
+  "title": "Repaint the lobby?",
+  "description": "Vote on repainting the shared lobby.",
+  "choices": [ { "title": "Yes" }, { "title": "No" } ],
+  "startDate": "2026-06-24T00:00:00Z",
+  "endDate": "2026-07-01T00:00:00Z",
+  "allowMultiple": false
+}
+
+@proposalId = {{createProposal.response.body.id}}
+
+### 7. Read results (homeowners cast votes client-side via the Vocdoni JS SDK)
+GET {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}/results
+Authorization: Bearer {{ownerToken}}
+
+### 8. Close voting
+POST {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}/close
+Authorization: Bearer {{ownerToken}}

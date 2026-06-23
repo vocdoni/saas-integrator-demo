@@ -1,0 +1,22 @@
+services:
+  api:
+    build: .
+    ports:
+      - "5095:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      # SQLite on a named volume so data survives container restarts.
+      ConnectionStrings__Default: "Data Source=/data/hoavoting.db"
+      # Vocdoni API token (required for any Vocdoni-backed call).
+      Vocdoni__BaseUrl: ${VOCDONI_BASE_URL:-https://saas-api-dev.vocdoni.net}
+      Vocdoni__ApiToken: ${VOCDONI_API_TOKEN:-}
+      Vocdoni__IntegratorAddress: ${VOCDONI_INTEGRATOR_ADDRESS:-}
+      # App auth + seeded admin.
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:-dev-only-insecure-signing-key-change-me-min-32-chars}
+      Admin__Email: ${ADMIN_EMAIL:-admin@hoa.local}
+      Admin__Password: ${ADMIN_PASSWORD:-change-me}
+    volumes:
+      - hoa-data:/data
+
+volumes:
+  hoa-data:
