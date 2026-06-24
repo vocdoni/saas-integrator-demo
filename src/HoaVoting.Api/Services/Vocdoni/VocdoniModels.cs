@@ -109,6 +109,21 @@ public sealed class CreateProcessRequest
     public ElectionParams? ElectionParams { get; set; }
 }
 
+public sealed class CreateProcessBundleRequest
+{
+    public string CensusId { get; set; } = "";
+
+    /// <summary>On-chain process ids to include in the bundle.</summary>
+    public List<string> Processes { get; set; } = new();
+}
+
+public sealed class CreateProcessBundleResponse
+{
+    /// <summary>e.g. "https://.../process/bundle/{bundleId}". The id is the last path segment.</summary>
+    public string? Uri { get; set; }
+    public string? Root { get; set; }
+}
+
 public sealed class ElectionParams
 {
     public Dictionary<string, string>? Title { get; set; }

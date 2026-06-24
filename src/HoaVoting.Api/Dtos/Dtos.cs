@@ -3,7 +3,7 @@ namespace HoaVoting.Api.Dtos;
 // Client-facing DTOs. Vocdoni wire types never leak past the service layer.
 
 public record LoginRequest(string Email, string Password);
-public record LoginResponse(string Token, DateTimeOffset Expires);
+public record LoginResponse(string Token, DateTimeOffset Expires, string Role);
 
 public record CreateAssociationRequest(string Name, string OwnerEmail, string OwnerPassword);
 public record ImportAssociationRequest(string Name, string VocdoniOrgAddress, string OwnerEmail, string OwnerPassword);
@@ -37,9 +37,11 @@ public record ProposalResponse(
     int AssociationId,
     string Title,
     string Description,
+    List<string> Choices,
     string Status,
     string VocdoniProcessId,
     string VocdoniCensusId,
+    string VocdoniBundleId,
     DateTimeOffset StartDate,
     DateTimeOffset EndDate,
     DateTimeOffset CreatedAt);
@@ -49,4 +51,18 @@ public record ProposalResultsResponse(
     string? Status,
     bool FinalResults,
     int VoteCount,
+    List<List<string>>? Results);
+
+/// <summary>Public, read-only voting-page payload (no auth).</summary>
+public record VotingInfoResponse(
+    string ProcessId,
+    string BundleId,
+    string Title,
+    string Description,
+    List<string> Choices,
+    DateTimeOffset StartDate,
+    DateTimeOffset EndDate,
+    string Status,
+    int? VoteCount,
+    string? OnchainStatus,
     List<List<string>>? Results);

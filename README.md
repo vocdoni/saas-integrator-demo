@@ -1,4 +1,4 @@
-# HOA Voting — .NET backend over the Vocdoni SaaS API
+# Homeowners Voting Platform — .NET backend over the Vocdoni SaaS API
 
 ASP.NET Core (.NET 10) backend for managing **homeowners' associations**. A single **admin**
 creates associations, each with its own **owner**, who manages **homeowners** (the census),
@@ -79,6 +79,32 @@ SQLite db persists in the `hoa-data` volume. OpenAPI spec at `/openapi/v1.json` 
 **Full walkthrough:** See `requests.http` for a curl-ready flow: admin login → create
 association → owner login → add homeowners → create proposal → read results.
 
+## Web app
+
+A React (Vite) SPA lives in `web/`, served by its own **`web`** compose service (nginx) on
+**http://localhost:3000**. nginx serves the SPA and proxies `/api` → the `api` service, so the
+browser stays same-origin (no CORS). `docker compose up --build` brings up both services. Two roles:
+
+- **Backend admin** (`SuperAdmin`) — create and list associations.
+- **Association admin** (`Owner`) — manage the **memberbase** (add/remove homeowners + CSV import)
+  and **voting processes** (create with member-number or email-2FA auth, view results, close). Each
+  proposal exposes a **Voting page** link.
+- **Public voting page** — `/processes/{processId}` is a no-login page (modeled on
+  app.vocdoni.io's `/processes/:id`) showing the title, description, and choices. Casting is not yet
+  wired (display only); the data comes from `GET /api/processes/{processId}`.
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| `web`   | http://localhost:3000 | SPA (UI + public voting page) + `/api` proxy |
+| `api`   | http://localhost:5095 | REST API directly (used by `e2e.sh`, `create-process.sh`, dev proxy) |
+
+Local development with hot reload (Vite proxies `/api` → `:5095`, so keep the backend running):
+
+```bash
+docker compose up -d api        # or dotnet run, for the API
+cd web && npm install && npm run dev   # http://localhost:5173
+```
+
 ## Test
 
 **Unit tests** (5/5 pass):
@@ -156,6 +182,9 @@ All endpoints except `/api/auth/login` require a valid JWT bearer token.
 - `POST /api/associations/import` — adopt an existing managed org (no Vocdoni create call)
 - `GET /api/associations` — list all
 - `GET /api/associations/{id}` — get one (admin or its owner)
+- `DELETE /api/associations/{id}` — remove the association + its proposals + owner login from the
+  app. The Vocdoni managed org is **not** deleted (the SaaS API has no org-delete endpoint), so it
+  persists and keeps consuming integrator quota — remove it from the Vocdoni dashboard to reclaim it.
 
 **Homeowners (admin or association owner):**
 - `GET /api/associations/{id}/homeowners` — list members
@@ -163,10 +192,16 @@ All endpoints except `/api/auth/login` require a valid JWT bearer token.
 - `DELETE /api/associations/{id}/homeowners/{memberId}` — remove member
 
 **Proposals (admin or association owner):**
-- `POST /api/associations/{id}/proposals` — create (group → census → group-publish → process → publish).
-  Body: `title`, `description`, `choices[]`, `startDate`, `endDate`, `allowMultiple` (default false),
-  `twoFactorAuth` (default false → CSP auth by member number; true → email OTP, needs member emails).
+- `POST /api/associations/{id}/proposals` — create (group → census → group-publish → process →
+  publish → **bundle**). The published process is wrapped in a new process bundle (stored as
+  `vocdoniBundleId`) for the CSP voting flow. Body: `title`, `description`, `choices[]`,
+  `startDate`, `endDate`, `allowMultiple` (default false), `twoFactorAuth` (default false → CSP auth
+  by member number; true → email OTP, needs member emails).
 - `GET /api/associations/{id}/proposals` — list
 - `GET /api/associations/{id}/proposals/{pid}` — get one
 - `POST /api/associations/{id}/proposals/{pid}/close` — end voting
 - `GET /api/associations/{id}/proposals/{pid}/results` — read tally
+
+**Public (no auth):**
+- `GET /api/processes/{processId}` — voting-page data (title, description, choices, dates, status,
+  best-effort on-chain vote count) for the public `/processes/{processId}` page

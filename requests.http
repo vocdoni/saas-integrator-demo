@@ -1,4 +1,4 @@
-### HOA Voting — end-to-end walkthrough
+### Homeowners Voting Platform — end-to-end walkthrough
 ### Run the API first: dotnet run --project src/HoaVoting.Api
 @host = http://localhost:5095
 
@@ -17,7 +17,7 @@ POST {{host}}/api/associations
 Content-Type: application/json
 Authorization: Bearer {{adminToken}}
 
-{ "name": "Maple Street HOA", "ownerEmail": "owner@maple.local", "ownerPassword": "owner-pw" }
+{ "name": "Maple Street Homeowners Voting Platform", "ownerEmail": "owner@maple.local", "ownerPassword": "owner-pw" }
 
 @assocId = {{createAssoc.response.body.id}}
 

@@ -18,5 +18,14 @@ services:
     volumes:
       - hoa-data:/data
 
+  # React SPA served by nginx; proxies /api -> the api service (same-origin, no CORS).
+  web:
+    build:
+      context: ./web
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
 volumes:
   hoa-data:

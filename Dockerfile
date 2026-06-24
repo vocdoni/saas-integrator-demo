@@ -1,11 +1,9 @@
-# Multi-stage build for the HOA Voting API. No local .NET SDK required.
+# Multi-stage build for the Homeowners Voting Platform API. No local .NET SDK required.
+# (The React SPA is built and served by the separate `web` compose service.)
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-
-# Restore first (layer-cached on csproj changes only).
 COPY src/HoaVoting.Api/HoaVoting.Api.csproj src/HoaVoting.Api/
 RUN dotnet restore src/HoaVoting.Api/HoaVoting.Api.csproj
-
 COPY src/ src/
 RUN dotnet publish src/HoaVoting.Api/HoaVoting.Api.csproj -c Release -o /app --no-restore
 

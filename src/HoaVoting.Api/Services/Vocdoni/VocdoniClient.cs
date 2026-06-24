@@ -105,6 +105,17 @@ public sealed class VocdoniClient(HttpClient http, IOptions<VocdoniOptions> opti
             $"process {draftProcessId} was not assigned an on-chain id within the timeout");
     }
 
+    public async Task<string> CreateBundleAsync(string censusId, List<string> processIds, CancellationToken ct = default)
+    {
+        var body = new CreateProcessBundleRequest { CensusId = censusId, Processes = processIds };
+        var resp = await SendAsync<CreateProcessBundleResponse>(HttpMethod.Post, "/process/bundle", body, ct);
+        // The response gives the bundle URI ".../process/bundle/{bundleId}"; the id is the last segment.
+        var id = resp.Uri?.TrimEnd('/').Split('/').LastOrDefault();
+        if (string.IsNullOrEmpty(id))
+            throw new InvalidOperationException("Vocdoni did not return a bundle URI.");
+        return id;
+    }
+
     public Task SetProcessStatusAsync(string processId, string status, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Put, $"/process/{processId}/status", new SetProcessStatusRequest { Status = status }, ct);
 

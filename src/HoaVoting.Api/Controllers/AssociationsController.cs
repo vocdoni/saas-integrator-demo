@@ -76,11 +76,16 @@ public class AssociationsController(AppDbContext db, IVocdoniClient vocdoni) : A
             new AssociationResponse(assoc.Id, assoc.Name, owner.Email, assoc.VocdoniOrgAddress, assoc.CreatedAt));
     }
 
-    [Authorize(Roles = nameof(AppRole.SuperAdmin))]
+    /// <summary>SuperAdmin sees all associations; an Owner sees only the one(s) they own.</summary>
+    [Authorize]
     [HttpGet]
     public async Task<ActionResult<IEnumerable<AssociationResponse>>> List(CancellationToken ct)
     {
-        var items = await db.Associations.Include(a => a.Owner).OrderBy(a => a.Id).ToListAsync(ct);
+        var query = db.Associations.Include(a => a.Owner).AsQueryable();
+        if (CurrentRole != AppRole.SuperAdmin)
+            query = query.Where(a => a.OwnerUserId == CurrentUserId);
+
+        var items = await query.OrderBy(a => a.Id).ToListAsync(ct);
         return items.Select(a => new AssociationResponse(
             a.Id, a.Name, a.Owner!.Email, a.VocdoniOrgAddress, a.CreatedAt)).ToList();
     }
@@ -93,5 +98,31 @@ public class AssociationsController(AppDbContext db, IVocdoniClient vocdoni) : A
         if (!Authorization.AssociationAccess.CanAccess(CurrentRole, CurrentUserId, assoc)) return Forbid();
 
         return new AssociationResponse(assoc.Id, assoc.Name, assoc.Owner!.Email, assoc.VocdoniOrgAddress, assoc.CreatedAt);
+    }
+
+    /// <summary>
+    /// Removes an association (its proposals and owner login) from this app. NOTE: the Vocdoni
+    /// managed org is NOT deleted — the SaaS API has no org-delete endpoint, so it persists (and
+    /// keeps consuming integrator quota). Remove it from the Vocdoni dashboard to fully reclaim it.
+    /// </summary>
+    [Authorize(Roles = nameof(AppRole.SuperAdmin))]
+    [HttpDelete("{id:int}")]
+    public async Task<ActionResult> Delete(int id, CancellationToken ct)
+    {
+        var assoc = await db.Associations
+            .Include(a => a.Proposals)
+            .Include(a => a.Owner)
+            .SingleOrDefaultAsync(a => a.Id == id, ct);
+        if (assoc is null) return NotFound();
+
+        db.Proposals.RemoveRange(assoc.Proposals);
+        var owner = assoc.Owner;
+        db.Associations.Remove(assoc);
+        // Drop the owner login too, unless they happen to own another association.
+        if (owner is not null && !await db.Associations.AnyAsync(a => a.OwnerUserId == owner.Id && a.Id != id, ct))
+            db.Users.Remove(owner);
+
+        await db.SaveChangesAsync(ct);
+        return NoContent();
     }
 }

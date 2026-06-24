@@ -1,3 +1,4 @@
+using System.Text.Json;
 using HoaVoting.Api.Authorization;
 using HoaVoting.Api.Data;
 using HoaVoting.Api.Dtos;
@@ -75,6 +76,8 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var draftProcessId = await vocdoni.CreateProcessAsync(process, ct);
         // Returns the on-chain process id (results/status are keyed by it, not the draft id).
         var processId = await vocdoni.PublishProcessAsync(draftProcessId, ct);
+        // Wrap the published process in a bundle (the CSP voting flow runs against the bundle).
+        var bundleId = await vocdoni.CreateBundleAsync(censusId, [processId], ct);
 
         var proposal = new Proposal
         {
@@ -83,6 +86,8 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             Description = req.Description,
             VocdoniCensusId = censusId,
             VocdoniProcessId = processId,
+            VocdoniBundleId = bundleId,
+            ChoicesJson = JsonSerializer.Serialize(req.Choices.Select(c => c.Title)),
             StartDate = req.StartDate,
             EndDate = req.EndDate,
             Status = ProposalStatus.Open,
@@ -146,8 +151,10 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
     private static Dictionary<string, string> Lang(string text) => new() { ["default"] = text };
 
     private static ProposalResponse ToResponse(Proposal p) => new(
-        p.Id, p.AssociationId, p.Title, p.Description, p.Status.ToString(),
-        p.VocdoniProcessId, p.VocdoniCensusId, p.StartDate, p.EndDate, p.CreatedAt);
+        p.Id, p.AssociationId, p.Title, p.Description,
+        JsonSerializer.Deserialize<List<string>>(p.ChoicesJson) ?? [],
+        p.Status.ToString(), p.VocdoniProcessId, p.VocdoniCensusId, p.VocdoniBundleId,
+        p.StartDate, p.EndDate, p.CreatedAt);
 
     private async Task<(Association?, ActionResult?)> ResolveAsync(int associationId, CancellationToken ct)
     {

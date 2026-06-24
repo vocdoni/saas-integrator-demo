@@ -26,6 +26,6 @@ public class AuthController(AppDbContext db, JwtTokenService jwt) : ControllerBa
             return Unauthorized();
 
         var (token, expires) = jwt.Issue(user);
-        return new LoginResponse(token, expires);
+        return new LoginResponse(token, expires, user.Role.ToString());
     }
 }

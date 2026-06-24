@@ -24,6 +24,9 @@ public interface IVocdoniClient
 
     /// <summary>Publishes a draft process and returns its on-chain (Vochain) process id.</summary>
     Task<string> PublishProcessAsync(string draftProcessId, CancellationToken ct = default);
+
+    /// <summary>Creates a process bundle for the census + processes; returns the bundle id.</summary>
+    Task<string> CreateBundleAsync(string censusId, List<string> processIds, CancellationToken ct = default);
     Task SetProcessStatusAsync(string processId, string status, CancellationToken ct = default);
     Task<ProcessResultsResponse> GetResultsAsync(string processId, CancellationToken ct = default);
 }

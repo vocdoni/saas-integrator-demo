@@ -8,3 +8,5 @@ tests/
 .remember/
 *.md
 .env
+web/node_modules/
+web/dist/

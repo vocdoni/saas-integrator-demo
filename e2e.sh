@@ -42,7 +42,7 @@ fi
 
 OWNER_EMAIL="owner+$(date +%s)@e2e.local"
 OWNER_PW="owner-pw-123"
-ASSOC_NAME="E2E HOA $(date +%H%M%S)"
+ASSOC_NAME="E2E Homeowners Voting Platform $(date +%H%M%S)"
 CSV="${CSV:-memberbase-test.csv}"   # memberbase: First Name,Email,Member Number
 TWOFA="${TWOFA:-false}"             # census 2FA: false = CSP auth-only, true = email OTP
 

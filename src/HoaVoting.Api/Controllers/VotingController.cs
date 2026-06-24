@@ -1,0 +1,43 @@
+using System.Text.Json;
+using HoaVoting.Api.Data;
+using HoaVoting.Api.Dtos;
+using HoaVoting.Api.Services.Vocdoni;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace HoaVoting.Api.Controllers;
+
+/// <summary>Public, read-only voting-page data keyed by the on-chain process id. No auth.</summary>
+[ApiController]
+[AllowAnonymous]
+[Route("api/processes")]
+public class VotingController(AppDbContext db, IVocdoniClient vocdoni) : ControllerBase
+{
+    [HttpGet("{processId}")]
+    public async Task<ActionResult<VotingInfoResponse>> Get(string processId, CancellationToken ct)
+    {
+        var p = await db.Proposals.SingleOrDefaultAsync(x => x.VocdoniProcessId == processId, ct);
+        if (p is null) return NotFound();
+
+        var choices = JsonSerializer.Deserialize<List<string>>(p.ChoicesJson) ?? [];
+
+        // Live on-chain status/tally is best-effort — the page still renders if Vocdoni is unreachable.
+        int? voteCount = null;
+        string? onchainStatus = null;
+        List<List<string>>? results = null;
+        try
+        {
+            var r = await vocdoni.GetResultsAsync(processId, ct);
+            voteCount = r.VoteCount;
+            onchainStatus = r.Status;
+            results = r.Results;
+        }
+        catch (VocdoniApiException) { /* leave nulls */ }
+        catch (HttpRequestException) { /* leave nulls */ }
+
+        return new VotingInfoResponse(
+            p.VocdoniProcessId, p.VocdoniBundleId, p.Title, p.Description, choices,
+            p.StartDate, p.EndDate, p.Status.ToString(), voteCount, onchainStatus, results);
+    }
+}

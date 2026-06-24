@@ -27,6 +27,12 @@ public class Proposal
     /// <summary>Vocdoni process (election) id.</summary>
     public string VocdoniProcessId { get; set; } = "";
 
+    /// <summary>Vocdoni process-bundle id the process was wrapped in (for the CSP voting flow).</summary>
+    public string VocdoniBundleId { get; set; } = "";
+
+    /// <summary>The proposal's choice titles, JSON-serialized, for the public voting page.</summary>
+    public string ChoicesJson { get; set; } = "[]";
+
     public DateTimeOffset StartDate { get; set; }
     public DateTimeOffset EndDate { get; set; }
 
