@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HoaVoting.Api.Controllers;
 
-/// <summary>Public, read-only voting-page data keyed by the on-chain process id. No auth.</summary>
+/// <summary>Public, read-only voting-page data keyed by the 24-hex ProcessID (#551). No auth.</summary>
 [ApiController]
 [AllowAnonymous]
 [Route("api/processes")]

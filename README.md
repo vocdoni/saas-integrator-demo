@@ -149,7 +149,8 @@ ORG=0x.. CENSUS_ID=6a.. ./create-process.sh           # standalone (existing int
 TITLE="Budget 2026" ./create-process.sh
 ```
 
-Prints the new on-chain process id. Multiple processes can share one census.
+Prints the new ProcessID (used for status/results) and its on-chain election id. Multiple processes
+can share one census.
 
 **How no-2FA publishing works:** the plain `POST /census/{id}/publish` only accepts the 2FA
 census types (`mail`/`sms`/`sms_or_mail`) and rejects auth-only with `census type not found`. The
@@ -160,7 +161,7 @@ member numbers fail at publish.
 
 ## Implementation Notes
 
-- **Async publish:** `PublishProcessAsync` polls the draft process until the on-chain election
+- **Async publish:** `PublishProcessAsync` polls the process until the on-chain election
   id is assigned. Marked `ponytail:` — for production, move this to a background job + status field.
 - **Integrator quota:** The free tier allows **1 managed organization**. Multiple associations
   require additional quota or a new integrator account. Deleting an association now frees the slot

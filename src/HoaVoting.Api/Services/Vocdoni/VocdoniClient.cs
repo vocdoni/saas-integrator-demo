@@ -81,30 +81,36 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
             new PublishCensusGroupRequest { AuthFields = authFields, TwoFaFields = twoFaFields, Weighted = false }, ct);
 
     public async Task<string> CreateProcessAsync(CreateProcessRequest request, CancellationToken ct = default) =>
-        // POST /process returns the process id as a bare JSON string.
+        // POST /process returns the 24-hex ProcessID as a bare JSON string. This is the handle for
+        // status/results/metadata (saas-backend #551), so the caller persists it.
         await SendAsync<string>(HttpMethod.Post, "/process", request, ct);
 
-    public async Task<string> PublishProcessAsync(string draftProcessId, CancellationToken ct = default)
+    /// <summary>
+    /// Publishes a process on-chain and returns its 64-hex on-chain election id. That id is only needed
+    /// to wrap the process in a bundle for the CSP voting flow; status/results/metadata stay addressed by
+    /// the 24-hex ProcessID (passed in here), not by this value — see saas-backend #551.
+    /// </summary>
+    public async Task<string> PublishProcessAsync(string processId, CancellationToken ct = default)
     {
         // Publish is async: it returns a jobId (202) and the on-chain election id is assigned to the
-        // process's `address` a little later. Poll the draft until that address appears.
+        // process's `address` a little later. Poll the process until that address appears.
         // ponytail: simple bounded poll, not a job-status state machine.
-        await SendAsync(HttpMethod.Post, $"/process/{draftProcessId}/publish", null, ct);
+        await SendAsync(HttpMethod.Post, $"/process/{processId}/publish", null, ct);
 
         for (var attempt = 0; attempt < 20; attempt++)
         {
-            var proc = await SendAsync<ProcessDetail>(HttpMethod.Get, $"/process/{draftProcessId}", null, ct);
+            var proc = await SendAsync<ProcessDetail>(HttpMethod.Get, $"/process/{processId}", null, ct);
             if (!string.IsNullOrEmpty(proc.Address))
                 return proc.Address!;
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
         throw new VocdoniApiException(HttpStatusCode.GatewayTimeout,
-            $"process {draftProcessId} was not assigned an on-chain id within the timeout");
+            $"process {processId} was not assigned an on-chain id within the timeout");
     }
 
-    public async Task<string> CreateBundleAsync(string censusId, List<string> processIds, CancellationToken ct = default)
+    public async Task<string> CreateBundleAsync(string censusId, List<string> electionIds, CancellationToken ct = default)
     {
-        var body = new CreateProcessBundleRequest { CensusId = censusId, Processes = processIds };
+        var body = new CreateProcessBundleRequest { CensusId = censusId, Processes = electionIds };
         var resp = await SendAsync<CreateProcessBundleResponse>(HttpMethod.Post, "/process/bundle", body, ct);
         // The response gives the bundle URI ".../process/bundle/{bundleId}"; the id is the last segment.
         var id = resp.Uri?.TrimEnd('/').Split('/').LastOrDefault();
@@ -113,9 +119,11 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         return id;
     }
 
+    /// <summary>Changes an election's status (e.g. "ended"). <paramref name="processId"/> is the 24-hex ProcessID (#551).</summary>
     public Task SetProcessStatusAsync(string processId, string status, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Put, $"/process/{processId}/status", new SetProcessStatusRequest { Status = status }, ct);
 
+    /// <summary>Reads an election's tally. <paramref name="processId"/> is the 24-hex ProcessID (#551), not the on-chain id.</summary>
     public Task<ProcessResultsResponse> GetResultsAsync(string processId, CancellationToken ct = default) =>
         SendAsync<ProcessResultsResponse>(HttpMethod.Get, $"/process/{processId}/results", null, ct);
 

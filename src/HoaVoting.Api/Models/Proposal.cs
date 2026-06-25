@@ -24,7 +24,11 @@ public class Proposal
     /// <summary>Vocdoni census id this proposal was published against.</summary>
     public string VocdoniCensusId { get; set; } = "";
 
-    /// <summary>Vocdoni process (election) id.</summary>
+    /// <summary>
+    /// Vocdoni 24-hex ProcessID — the management handle used to read results and change status
+    /// (saas-backend #551). Distinct from the on-chain election id, which only the bundle/voter
+    /// flow uses; the demo doesn't need to persist that one.
+    /// </summary>
     public string VocdoniProcessId { get; set; } = "";
 
     /// <summary>Vocdoni process-bundle id the process was wrapped in (for the CSP voting flow).</summary>
