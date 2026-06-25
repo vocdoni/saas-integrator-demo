@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
+import DangerZone from './DangerZone.jsx'
 
 const pad = (n) => String(n).padStart(2, '0')
 const toLocalInput = (d) =>
@@ -208,6 +209,8 @@ export default function Proposals({ assoc }) {
           </ul>
         )}
       </section>
+
+      <DangerZone assoc={assoc} />
     </div>
   )
 }

@@ -75,7 +75,7 @@ else
     ok "created association id=$ASSOC_ID, vocdoni org=$ORG"
   elif printf '%s' "$BODY" | grep -q 40154; then
     # Integrator managed-org quota is full — adopt an existing managed org instead.
-    ORG=$(curl -s -m 15 "$VOCDONI_BASE_URL/organizations/$VOCDONI_INTEGRATOR_ADDRESS/managed" \
+    ORG=$(curl -s -m 15 "$VOCDONI_BASE_URL/integrator/organizations" \
       -H "Authorization: Bearer $VOCDONI_API_TOKEN" | jq -r '.organizations[0].address // empty')
     [ -n "$ORG" ] || die "managed-org quota full and no existing org to adopt"
     OWNER_EMAIL="owner-import@e2e.local"

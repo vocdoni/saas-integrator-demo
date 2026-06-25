@@ -9,13 +9,8 @@ public class VocdoniOptions
 
     /// <summary>
     /// Pre-provisioned API token (an integrator org's API key) sent as
-    /// "Authorization: Bearer &lt;token&gt;" on every call.
+    /// "Authorization: Bearer &lt;token&gt;" on every call. Needs the managed:write scope to
+    /// create/delete managed orgs. The integrator org is resolved from this key (path-less endpoints).
     /// </summary>
     public string ApiToken { get; set; } = "";
-
-    /// <summary>
-    /// Address of the integrator organization the <see cref="ApiToken"/> is scoped to. Associations
-    /// are created as managed orgs under it via POST /organizations/{IntegratorAddress}/managed.
-    /// </summary>
-    public string IntegratorAddress { get; set; } = "";
 }

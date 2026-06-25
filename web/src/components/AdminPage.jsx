@@ -40,7 +40,7 @@ export default function AdminPage() {
   }
 
   async function remove(a) {
-    if (!confirm(`Remove "${a.name}"?\n\nThis deletes the association, its proposals and owner login from this app. The Vocdoni organization itself is not deleted (remove it from the Vocdoni dashboard to free quota).`))
+    if (!confirm(`Permanently delete "${a.name}"?\n\nThis deletes the association, its proposals and owner login, and the Vocdoni organization (members, censuses, processes), reclaiming integrator quota. Close any active voting processes first. This cannot be undone.`))
       return
     setError('')
     try {

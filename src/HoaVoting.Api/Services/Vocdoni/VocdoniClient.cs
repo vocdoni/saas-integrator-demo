@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 
 namespace HoaVoting.Api.Services.Vocdoni;
 
@@ -18,36 +17,34 @@ public sealed class VocdoniApiException(HttpStatusCode status, string body)
 /// default Authorization header when the client is registered (see Program.cs), so this class is
 /// just request shaping + JSON. // ponytail: no login flow — one configured Bearer token.
 /// </summary>
-public sealed class VocdoniClient(HttpClient http, IOptions<VocdoniOptions> options) : IVocdoniClient
+public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
-    private readonly VocdoniOptions _o = options.Value;
-
     /// <summary>
-    /// Creates an association as a managed org under the integrator. API keys are not permitted on
-    /// POST /organizations, but the integrator endpoint accepts them.
+    /// Creates an association as a managed org under the integrator. The integrator org is resolved
+    /// from the API key (path-less endpoint), so no address is sent. Requires the key's managed:write scope.
     /// </summary>
     public async Task<string> CreateOrganizationAsync(string name, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(_o.IntegratorAddress))
-            throw new InvalidOperationException("Vocdoni:IntegratorAddress is not configured.");
-
         var body = new VocdoniOrganizationInfo
         {
             Type = "association",
-            ProvisionAccount = true,
             Meta = new Dictionary<string, object> { ["name"] = name },
         };
         var org = await SendAsync<VocdoniOrganizationInfo>(
-            HttpMethod.Post, $"/organizations/{_o.IntegratorAddress}/managed", body, ct);
+            HttpMethod.Post, "/integrator/organizations", body, ct);
         if (string.IsNullOrEmpty(org.Address))
             throw new InvalidOperationException("Vocdoni did not return an organization address.");
         return org.Address;
     }
+
+    /// <summary>Deletes a managed org and all its data. 409 if it has active on-chain elections.</summary>
+    public Task DeleteOrganizationAsync(string orgAddress, CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Delete, $"/integrator/organizations/{orgAddress}", null, ct);
 
     public Task<AddMembersResponse> AddMembersAsync(string orgAddress, List<VocdoniOrgMember> members, CancellationToken ct = default) =>
         SendAsync<AddMembersResponse>(HttpMethod.Post, $"/organizations/{orgAddress}/members",

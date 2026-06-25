@@ -17,7 +17,7 @@ integrator org.
 
 | App concept   | Vocdoni                                              |
 |---------------|------------------------------------------------------|
-| Association   | Managed organization (`POST /organizations/{parent}/managed`) |
+| Association   | Managed organization (`POST /integrator/organizations`) |
 | Homeowner     | Org member + census participant                      |
 | Proposal      | Member group → census → process (election) + results |
 
@@ -35,7 +35,8 @@ integrator org.
 - Homeowners are **Vocdoni org members only**, not app users. They authenticate to *vote* via
   Vocdoni's CSP flow (client-side, in the frontend).
 - All Vocdoni calls use a single **integrator API key** (`Authorization: Bearer`). Associations
-  are created as **managed orgs** under the integrator (`POST /organizations/{integratorAddress}/managed`).
+  are created as **managed orgs** under the integrator (`POST /integrator/organizations`; the
+  integrator org is resolved from the API key, so the path carries no address).
 
 ## Configuration
 
@@ -46,21 +47,22 @@ Jwt:SigningKey                     long random secret (>= 32 chars)
 Admin:Email / Admin:Password       seeds the admin on startup
 Vocdoni:BaseUrl                    Vocdoni SaaS base URL (dev: https://saas-api-dev.vocdoni.net;
                                    stg: https://saas-api-stg.vocdoni.net)
-Vocdoni:ApiToken                   integrator org's API key (Bearer)
-Vocdoni:IntegratorAddress          address of the integrator org the key belongs to (required)
+Vocdoni:ApiToken                   integrator org's API key (Bearer); needs the managed:write scope
 ConnectionStrings:Default          SQLite by default
 ```
 
+The integrator org is resolved from the API key (the endpoints are path-less), so no integrator
+address is configured.
+
 **Prerequisites:**
 1. A Vocdoni integrator account (free tier, SaaS dashboard)
-2. Your integrator org's **address** (visible in dashboard)
-3. An **API key** minted under that org (also in dashboard)
+2. An **API key** minted under that org (in the dashboard) with the **`managed:write`** scope (and
+   `managed:read` if you run `e2e.sh`, which lists managed orgs for its adopt path)
 
 ```bash
 cd src/HoaVoting.Api
 dotnet user-secrets init
 dotnet user-secrets set "Vocdoni:ApiToken" "your-api-key"
-dotnet user-secrets set "Vocdoni:IntegratorAddress" "0x..."
 dotnet user-secrets set "Jwt:SigningKey" "$(openssl rand -base64 48)"
 ```
 
@@ -161,7 +163,8 @@ member numbers fail at publish.
 - **Async publish:** `PublishProcessAsync` polls the draft process until the on-chain election
   id is assigned. Marked `ponytail:` — for production, move this to a background job + status field.
 - **Integrator quota:** The free tier allows **1 managed organization**. Multiple associations
-  require additional quota or a new integrator account. No delete-managed-org endpoint exists.
+  require additional quota or a new integrator account. Deleting an association now frees the slot
+  (`DELETE /integrator/organizations/{addr}` rolls back the integrator's usage counters).
 - **Org/process addresses:** Sent/read as **hex strings** (Vocdoni's `HexBytes` wire format),
   not the int arrays the swagger nominally shows.
 - **Swagger drift:** member deletion is `DELETE /organizations/{address}/members` (**plural**);
@@ -183,8 +186,10 @@ All endpoints except `/api/auth/login` require a valid JWT bearer token.
 - `GET /api/associations` — list all
 - `GET /api/associations/{id}` — get one (admin or its owner)
 - `DELETE /api/associations/{id}` — remove the association + its proposals + owner login from the
-  app. The Vocdoni managed org is **not** deleted (the SaaS API has no org-delete endpoint), so it
-  persists and keeps consuming integrator quota — remove it from the Vocdoni dashboard to reclaim it.
+  app, **and** delete the Vocdoni managed org via `DELETE /integrator/organizations/{addr}` (cascade:
+  members, censuses, processes, bundles), reclaiming integrator quota. Returns **409** if the org
+  still has active on-chain elections — close those proposals first. An org already gone upstream
+  (404) is treated as success.
 
 **Homeowners (admin or association owner):**
 - `GET /api/associations/{id}/homeowners` — list members

@@ -101,11 +101,13 @@ public class AssociationsController(AppDbContext db, IVocdoniClient vocdoni) : A
     }
 
     /// <summary>
-    /// Removes an association (its proposals and owner login) from this app. NOTE: the Vocdoni
-    /// managed org is NOT deleted — the SaaS API has no org-delete endpoint, so it persists (and
-    /// keeps consuming integrator quota). Remove it from the Vocdoni dashboard to fully reclaim it.
+    /// Removes an association: deletes the Vocdoni managed org (cascade — members, censuses,
+    /// processes, bundles) and reclaims integrator quota, then drops its proposals and owner login
+    /// from this app. Blocked with 409 if the org still has active on-chain elections — close the
+    /// proposals first. An already-deleted org (404 upstream) is treated as success. Allowed for the
+    /// admin or the association's own owner (an owner deleting their own org removes their login too).
     /// </summary>
-    [Authorize(Roles = nameof(AppRole.SuperAdmin))]
+    [Authorize]
     [HttpDelete("{id:int}")]
     public async Task<ActionResult> Delete(int id, CancellationToken ct)
     {
@@ -114,6 +116,23 @@ public class AssociationsController(AppDbContext db, IVocdoniClient vocdoni) : A
             .Include(a => a.Owner)
             .SingleOrDefaultAsync(a => a.Id == id, ct);
         if (assoc is null) return NotFound();
+        if (!Authorization.AssociationAccess.CanAccess(CurrentRole, CurrentUserId, assoc)) return Forbid();
+
+        if (!string.IsNullOrEmpty(assoc.VocdoniOrgAddress))
+        {
+            try
+            {
+                await vocdoni.DeleteOrganizationAsync(assoc.VocdoniOrgAddress, ct);
+            }
+            catch (VocdoniApiException e) when (e.Status == System.Net.HttpStatusCode.NotFound)
+            {
+                // Org already gone upstream — proceed with local cleanup.
+            }
+            catch (VocdoniApiException e) when (e.Status == System.Net.HttpStatusCode.Conflict)
+            {
+                return Conflict("Association has active proposals on-chain. Close them before deleting.");
+            }
+        }
 
         db.Proposals.RemoveRange(assoc.Proposals);
         var owner = assoc.Owner;

@@ -4,6 +4,9 @@ public interface IVocdoniClient
 {
     Task<string> CreateOrganizationAsync(string name, CancellationToken ct = default);
 
+    /// <summary>Deletes a managed org and all its data; throws 409 if it has active on-chain elections.</summary>
+    Task DeleteOrganizationAsync(string orgAddress, CancellationToken ct = default);
+
     Task<AddMembersResponse> AddMembersAsync(string orgAddress, List<VocdoniOrgMember> members, CancellationToken ct = default);
     Task<List<VocdoniOrgMember>> ListMembersAsync(string orgAddress, CancellationToken ct = default);
     Task DeleteMembersAsync(string orgAddress, List<string> memberIds, CancellationToken ct = default);
