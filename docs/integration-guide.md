@@ -680,8 +680,8 @@ Publishing is **idempotent**: if the process is already published, you get `200`
 `{ "address", "status" }` directly instead of a new job.
 
 > **Tip:** keep using the **ProcessID** (`$PROCESS`, the 24-hex id `POST /process` returned) for
-> status, results, and metadata — the same id, before and after publishing. The on-chain election id
-> in `result.address` is a low-level detail used only by the voting flow.
+> status, results, metadata, and the bundle — the same id, before and after publishing. The on-chain
+> election id in `result.address` only surfaces client-side, when the voter signs their ballot.
 
 **Change status** — also async (`ready`, `paused`, `ended`, `canceled`). Uses the **ProcessID**.
 ```bash
@@ -698,11 +698,11 @@ Voting is **voter-facing and cryptographic**, and it's the one place you hand of
 CSP (Credential Service Provider) endpoints; the SDK does the ballot encoding and transaction signing.
 
 1. **Bundle the process** (server-side, with your key). A bundle is the voter-facing entry point and
-   ties the process(es) to the census. This is the one place the **on-chain election id**
-   (`result.address` from publish) is used — bundles reference it, not the ProcessID.
+   ties the process(es) to the census. Reference each process by its **ProcessID** — since saas-backend
+   #554 the bundle resolves it to the on-chain id for you (passing the on-chain id still works too).
    ```bash
    curl "${auth[@]}" -X POST "$B/process/bundle" \
-     -d "{\"censusId\":\"$CENSUS\",\"processes\":[\"$ELECTION\"]}"
+     -d "{\"censusId\":\"$CENSUS\",\"processes\":[\"$PROCESS\"]}"
    ```
    ```jsonc
    { "root": "deadbeef…", "uri": "https://…/process/bundle/<bundleId>" }
@@ -752,8 +752,8 @@ CSP (Credential Service Provider) endpoints; the SDK does the ballot encoding an
 **Gotchas**
 - `POST /process` returns a **bare string** (the ProcessID), not an object.
 - Publish and status changes are **jobs** — read the outcome from `/jobs/{jobId}`, not the POST body.
-- Address the process by its **ProcessID** for status, results, and metadata. The on-chain election id
-  (`result.address`) is needed only to bundle the process and sign voter payloads.
+- Address the process by its **ProcessID** for status, results, metadata, and the bundle. The on-chain
+  election id (`result.address`) is needed only client-side, to sign voter payloads.
 
 ### Results & Jobs
 
@@ -831,9 +831,9 @@ A one-screen field guide to the sharp edges, all of which this repo hit:
 6. **Delete members is the plural path** `DELETE /organizations/{addr}/members` with a body of `ids`.
 7. **Free tier = 1 managed org.** Deleting one frees the slot (and the cascade reclaims quota), but is
    blocked with `409` while elections are still active.
-8. **One ProcessID throughout.** Use the ProcessID (from `POST /process`) for status, results, and
-   metadata — before and after publish. The on-chain election id (`result.address`) is only used to
-   bundle the process and sign voter payloads.
+8. **One ProcessID throughout.** Use the ProcessID (from `POST /process`) for status, results,
+   metadata, and the bundle — before and after publish. The on-chain election id (`result.address`)
+   is only used client-side, to sign voter payloads.
 9. **The API relays votes; it doesn't build them.** Ballot encoding and signing are client-side in
    `@vocdoni/sdk`. Relay is path-less: `POST /vote` (the signed envelope names the process).
 10. **Read the results matrix as `results[question][choice]`**, values are strings.

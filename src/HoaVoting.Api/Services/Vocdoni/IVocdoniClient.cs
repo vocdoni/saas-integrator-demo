@@ -27,13 +27,14 @@ public interface IVocdoniClient
     Task<string> CreateProcessAsync(CreateProcessRequest request, CancellationToken ct = default);
 
     /// <summary>
-    /// Publishes a process on-chain and returns its on-chain (Vochain) election id — used only to bundle
-    /// the process for voting, not for status/results (those use the ProcessID). See saas-backend #551.
+    /// Publishes a process on-chain and waits until it is live. The integrator addresses the process by
+    /// its ProcessID everywhere (status/results/metadata and the bundle), so the on-chain election id is
+    /// not returned — see saas-backend #551 and #554.
     /// </summary>
-    Task<string> PublishProcessAsync(string processId, CancellationToken ct = default);
+    Task PublishProcessAsync(string processId, CancellationToken ct = default);
 
-    /// <summary>Creates a process bundle from the census + on-chain election ids; returns the bundle id.</summary>
-    Task<string> CreateBundleAsync(string censusId, List<string> electionIds, CancellationToken ct = default);
+    /// <summary>Creates a process bundle from the census + ProcessIDs; returns the bundle id.</summary>
+    Task<string> CreateBundleAsync(string censusId, List<string> processIds, CancellationToken ct = default);
 
     /// <summary>Changes a process status (by ProcessID).</summary>
     Task SetProcessStatusAsync(string processId, string status, CancellationToken ct = default);

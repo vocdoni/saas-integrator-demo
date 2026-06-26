@@ -86,14 +86,14 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         await SendAsync<string>(HttpMethod.Post, "/process", request, ct);
 
     /// <summary>
-    /// Publishes a process on-chain and returns its 64-hex on-chain election id. That id is only needed
-    /// to wrap the process in a bundle for the CSP voting flow; status/results/metadata stay addressed by
-    /// the 24-hex ProcessID (passed in here), not by this value — see saas-backend #551.
+    /// Publishes a process on-chain and waits until it is live (an on-chain election id is assigned).
+    /// The integrator addresses the process by its 24-hex ProcessID everywhere — status/results/metadata
+    /// (#551) and the bundle (#554) — so the on-chain election id itself is never needed here.
     /// </summary>
-    public async Task<string> PublishProcessAsync(string processId, CancellationToken ct = default)
+    public async Task PublishProcessAsync(string processId, CancellationToken ct = default)
     {
-        // Publish is async: it returns a jobId (202) and the on-chain election id is assigned to the
-        // process's `address` a little later. Poll the process until that address appears.
+        // Publish is async: it returns a jobId (202) and the process goes on-chain a little later.
+        // Poll until the process has an on-chain address, i.e. it is published.
         // ponytail: simple bounded poll, not a job-status state machine.
         await SendAsync(HttpMethod.Post, $"/process/{processId}/publish", null, ct);
 
@@ -101,16 +101,16 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         {
             var proc = await SendAsync<ProcessDetail>(HttpMethod.Get, $"/process/{processId}", null, ct);
             if (!string.IsNullOrEmpty(proc.Address))
-                return proc.Address!;
+                return;
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
         throw new VocdoniApiException(HttpStatusCode.GatewayTimeout,
-            $"process {processId} was not assigned an on-chain id within the timeout");
+            $"process {processId} was not published within the timeout");
     }
 
-    public async Task<string> CreateBundleAsync(string censusId, List<string> electionIds, CancellationToken ct = default)
+    public async Task<string> CreateBundleAsync(string censusId, List<string> processIds, CancellationToken ct = default)
     {
-        var body = new CreateProcessBundleRequest { CensusId = censusId, Processes = electionIds };
+        var body = new CreateProcessBundleRequest { CensusId = censusId, Processes = processIds };
         var resp = await SendAsync<CreateProcessBundleResponse>(HttpMethod.Post, "/process/bundle", body, ct);
         // The response gives the bundle URI ".../process/bundle/{bundleId}"; the id is the last segment.
         var id = resp.Uri?.TrimEnd('/').Split('/').LastOrDefault();

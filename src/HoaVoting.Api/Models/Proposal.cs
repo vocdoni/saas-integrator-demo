@@ -25,9 +25,9 @@ public class Proposal
     public string VocdoniCensusId { get; set; } = "";
 
     /// <summary>
-    /// Vocdoni 24-hex ProcessID — the management handle used to read results and change status
-    /// (saas-backend #551). Distinct from the on-chain election id, which only the bundle/voter
-    /// flow uses; the demo doesn't need to persist that one.
+    /// Vocdoni 24-hex ProcessID — the single handle the integrator uses: results, status, and the
+    /// bundle (saas-backend #551, #554). The on-chain election id only surfaces client-side in the
+    /// voter signing flow, so the demo never handles it.
     /// </summary>
     public string VocdoniProcessId { get; set; } = "";
 

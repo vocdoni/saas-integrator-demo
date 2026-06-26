@@ -73,13 +73,12 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             },
         };
 
-        // POST /process returns the 24-hex ProcessID. Since saas-backend #551 this is the handle for
-        // status/results/metadata (the management API), so it's what we persist below.
+        // POST /process returns the 24-hex ProcessID — the one handle the integrator needs. It
+        // addresses status/results/metadata (saas-backend #551) and the bundle (#554).
         var processId = await vocdoni.CreateProcessAsync(process, ct);
-        // Publishing assigns an on-chain election id (64-hex). That id is only needed to wrap the
-        // process in a bundle for the CSP voting flow — it is NOT used for status/results anymore.
-        var electionId = await vocdoni.PublishProcessAsync(processId, ct);
-        var bundleId = await vocdoni.CreateBundleAsync(censusId, [electionId], ct);
+        // Publish on-chain and wait until it's live (the bundle requires a published process).
+        await vocdoni.PublishProcessAsync(processId, ct);
+        var bundleId = await vocdoni.CreateBundleAsync(censusId, [processId], ct);
 
         var proposal = new Proposal
         {
