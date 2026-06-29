@@ -20,6 +20,13 @@ voter submits, and how to read the [results](/developers/docs/results) matrix.
 | `costExponent` | Exponent applied per entry when computing a ballot's total cost (`2` = quadratic). |
 | `maxTotalCost` / `minTotalCost` | Bounds on `Σ(value[i] ^ costExponent)` (`0` = no bound). |
 
+> [!NOTE] Verify the cost bounds against a live call
+> `maxTotalCost` and `minTotalCost` are ballot-protocol fields and are **not** modelled in the SaaS
+> API swagger's `voteType` schema (which lists only `maxCount`, `maxValue`, `uniqueChoices`,
+> `costExponent`, `costFromWeight` and `maxVoteOverwrites`). The quadratic, budget and forced-approval
+> recipes below rely on them, so confirm they're honored by the deployed backend (e.g. with `e2e.sh`)
+> before depending on the cost bounds.
+
 A **ballot** is an array of natural numbers, one entry per field. **Results** are a histogram:
 `results[field][value]` = how many voters put `value` in `field`. Per-option tallies are computed from
 that — the reading differs by type (covered below and in [Results](/developers/docs/results)).

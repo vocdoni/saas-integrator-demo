@@ -65,6 +65,9 @@ read them from `GET /integrator` (see
 
 - The **free tier allows one managed organization**; deleting it frees the slot (the cascade rolls back
   your usage counters).
-- The per-managed-org limits — members and process drafts — are governed by your integrator plan and
-  may be `0` until your plan grants them; enable integrator access or upgrade from the API Dashboard.
+- The integrator limits — managed orgs (`maxManagedOrgs`), published processes (`maxManagedProcesses`),
+  relayed votes (`maxVotes`) and OTP messages (`maxEmails` / `maxSMS`) — are governed by your integrator
+  plan and may be `0` until your plan grants them; enable integrator access or upgrade from the API
+  Dashboard. The matching `usage` counters are `managedOrgs`, `managedProcesses`, `sentVotes`,
+  `sentEmails` and `sentSMS`.
 - A `0` limit in the `GET /integrator` response means **unlimited**.

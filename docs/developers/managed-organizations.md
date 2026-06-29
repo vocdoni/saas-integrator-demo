@@ -81,8 +81,8 @@ curl "${auth[@]}" -X DELETE "$B/integrator/organizations/$ORG"
 
 ## Quota and usage
 
-See how many managed orgs, processes, and census seats you've used against your limits — and whether
-integrator features are enabled for your account.
+See how many managed orgs, processes, votes and OTP messages you've used against your limits — and
+whether integrator features are enabled for your account.
 
 ```bash
 curl "${auth[@]}" "$B/integrator"
@@ -90,8 +90,8 @@ curl "${auth[@]}" "$B/integrator"
 
 ```jsonc
 { "enabled": true,
-  "limits": { "maxManagedOrgs": 1, "maxManagedProcesses": 0, "maxManagedCensusSize": 0 },
-  "usage":  { "managedOrgs": 1, "managedProcesses": 3, "managedCensusSize": 42 } }
+  "limits": { "maxManagedOrgs": 1, "maxManagedProcesses": 0, "maxVotes": 0, "maxEmails": 0, "maxSMS": 0 },
+  "usage":  { "managedOrgs": 1, "managedProcesses": 3, "sentVotes": 42, "sentEmails": 0, "sentSMS": 0 } }
 ```
 
 A `0` limit means **unlimited**. The free tier allows **one managed organization** — delete one to
