@@ -23,17 +23,19 @@ integrator org.
 
 ## Scope
 
-- **In scope:** associations, owners, homeowners/census, proposals (create/close), results.
-- **Out of scope:** vote casting. The Vocdoni `/vote` endpoint only *relays an already-signed
-  Vochain transaction*; ballot encoding + signing is client-side crypto done by the Vocdoni
-  **JS SDK**. A frontend casts votes; homeowners authenticate via Vocdoni's CSP/bundle flow.
+- **In scope:** associations, owners, homeowners/census, proposals (create/close), results, and
+  **vote casting** — the web app casts ballots client-side **through the Vocdoni SaaS API** via
+  [`@vocdoni/integrator-sdk`](https://github.com/vocdoni/integrator-sdk) (no direct Vochain calls).
+- **The backend never builds or signs ballots.** The Vocdoni `/vote` endpoint only *relays an
+  already-signed Vochain transaction*; ballot encoding + signing is client-side crypto, done in the
+  voter's browser by the integrator SDK. Homeowners authenticate via Vocdoni's CSP/bundle flow.
 
 ## Identity
 
 - The backend owns app identity: hardcoded **admin** (seeded from env/config) who registers
   associations, plus per-association **Owners** who log in here and manage their association.
 - Homeowners are **Vocdoni org members only**, not app users. They authenticate to *vote* via
-  Vocdoni's CSP flow (client-side, in the frontend).
+  Vocdoni's CSP flow, implemented client-side in the web app (`web/src/voting.js`).
 - All Vocdoni calls use a single **integrator API key** (`Authorization: Bearer`). Associations
   are created as **managed orgs** under the integrator (`POST /integrator/organizations`; the
   integrator org is resolved from the API key, so the path carries no address).
@@ -89,11 +91,15 @@ browser stays same-origin (no CORS). `docker compose up --build` brings up both 
 
 - **Backend admin** (`SuperAdmin`) — create and list associations.
 - **Association admin** (`Owner`) — manage the **memberbase** (add/remove homeowners + CSV import)
-  and **voting processes** (create with member-number or email-2FA auth, view results, close). Each
-  proposal exposes a **Voting page** link.
+  and **voting processes** (create single-choice or **multichoice** ballots with member-number or
+  email-2FA auth, view results, close). Each proposal exposes a **Voting page** link. Results bars
+  fill against the **census size** (turnout share) and show the eligible count.
 - **Public voting page** — `/processes/{processId}` is a no-login page (modeled on
-  app.vocdoni.io's `/processes/:id`) showing the title, description, and choices. Casting is not yet
-  wired (display only); the data comes from `GET /api/processes/{processId}`.
+  app.vocdoni.io's `/processes/:id`). It shows the ballot and lets a homeowner **cast a vote**:
+  authenticate by member number (plus an email OTP for 2FA censuses), pick a choice (or several, for
+  multichoice), and submit. Casting runs entirely client-side against the SaaS API via
+  `@vocdoni/integrator-sdk` (see `web/src/voting.js`) — CSP auth → CSP sign → relay `POST /vote` →
+  poll for the vote nullifier. Page data comes from `GET /api/processes/{processId}`.
 
 | Service | URL | Purpose |
 |---------|-----|---------|
@@ -109,7 +115,7 @@ cd web && npm install && npm run dev   # http://localhost:5173
 
 ## Test
 
-**Unit tests** (5/5 pass):
+**Unit tests** (11/11 pass):
 
 ```bash
 docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test
@@ -118,7 +124,8 @@ docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet 
 Or locally: `dotnet test`.
 
 - `AuthorizationTests` — an Owner cannot access another's association.
-- `VocdoniClientTests` — verifies Bearer token is sent; failures surface without retry.
+- `VocdoniClientTests` — Bearer token is sent and failures surface without retry; member listing
+  walks every page; async publish/status poll the job endpoint (202→poll, 200→idempotent, fail-fast).
 
 **End-to-end test** against the live Vocdoni SaaS API:
 
@@ -173,6 +180,18 @@ member numbers fail at publish.
 - **Swagger drift:** member deletion is `DELETE /organizations/{address}/members` (**plural**);
   the swagger's singular `/member` returns 404 on the deployed backend.
 - **Census reuse:** multiple processes can target the same published census (see `create-process.sh`).
+- **Client-side voting:** the web app casts ballots in the browser via `@vocdoni/integrator-sdk`
+  (`@vocdoni/api-client` + `@vocdoni/api-voting`), which talk **only** to the SaaS API. The flow lives
+  in `web/src/voting.js` (`castVote`): bundle CSP auth (member number, +OTP for 2FA) → CSP sign over an
+  ephemeral key → relay `POST /vote` → poll the job for the nullifier. The backend only exposes the
+  SaaS API base URL to the page (`VotingInfoResponse.apiUrl`); it never builds or signs ballots.
+- **Turnout / census size:** result bars fill against the **eligible voter count** (the published
+  census size), read from `GET /process/{id}` (`census.size`) and surfaced as `censusSize` on the
+  results + public voting payloads. The page shows "N eligible" alongside the vote count.
+- **Multichoice (approval):** `allowMultiple` proposals use approval voting — `voteType
+  {maxCount:N, maxValue:1, uniqueChoices:false}` (a 0/1 field per option; `uniqueChoices` **must** be
+  false or multi-select ballots are rejected). The ballot is `[v0..vN-1]`; results have one field per
+  option (`[#voted-0, #voted-1]`), so each option's count is `results[i][1]` (not `results[0]`).
 - **Single admin:** The hardcoded admin (from env) is the only one who can register associations.
   Multiple admins would require a lookup table; add when needed.
 
@@ -211,5 +230,7 @@ All endpoints except `/api/auth/login` require a valid JWT bearer token.
 - `GET /api/associations/{id}/proposals/{pid}/results` — read tally
 
 **Public (no auth):**
-- `GET /api/processes/{processId}` — voting-page data (title, description, choices, dates, status,
-  best-effort on-chain vote count) for the public `/processes/{processId}` page
+- `GET /api/processes/{processId}` — voting-page data for the public `/processes/{processId}` page:
+  title, description, choices, dates, status, `allowMultiple`, and (best-effort) on-chain
+  `voteCount`, `results`, and `censusSize`. Also returns `bundleId` and `apiUrl` (the SaaS API base
+  URL) so the page can cast votes client-side via the integrator SDK.
