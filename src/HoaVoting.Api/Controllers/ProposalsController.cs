@@ -73,10 +73,11 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             },
         };
 
-        var draftProcessId = await vocdoni.CreateProcessAsync(process, ct);
-        // Returns the on-chain process id (results/status are keyed by it, not the draft id).
-        var processId = await vocdoni.PublishProcessAsync(draftProcessId, ct);
-        // Wrap the published process in a bundle (the CSP voting flow runs against the bundle).
+        // POST /process returns the 24-hex ProcessID — the one handle the integrator needs. It
+        // addresses status/results/metadata (saas-backend #551) and the bundle (#554).
+        var processId = await vocdoni.CreateProcessAsync(process, ct);
+        // Publish on-chain and wait until it's live (the bundle requires a published process).
+        await vocdoni.PublishProcessAsync(processId, ct);
         var bundleId = await vocdoni.CreateBundleAsync(censusId, [processId], ct);
 
         var proposal = new Proposal

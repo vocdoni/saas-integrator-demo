@@ -24,7 +24,11 @@ public class Proposal
     /// <summary>Vocdoni census id this proposal was published against.</summary>
     public string VocdoniCensusId { get; set; } = "";
 
-    /// <summary>Vocdoni process (election) id.</summary>
+    /// <summary>
+    /// Vocdoni 24-hex ProcessID — the single handle the integrator uses: results, status, and the
+    /// bundle (saas-backend #551, #554). The on-chain election id only surfaces client-side in the
+    /// voter signing flow, so the demo never handles it.
+    /// </summary>
     public string VocdoniProcessId { get; set; } = "";
 
     /// <summary>Vocdoni process-bundle id the process was wrapped in (for the CSP voting flow).</summary>

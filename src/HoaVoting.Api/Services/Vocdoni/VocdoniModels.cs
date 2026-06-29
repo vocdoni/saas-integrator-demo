@@ -113,7 +113,7 @@ public sealed class CreateProcessBundleRequest
 {
     public string CensusId { get; set; } = "";
 
-    /// <summary>On-chain process ids to include in the bundle.</summary>
+    /// <summary>ProcessIDs to include in the bundle (the on-chain election id also works; see #554).</summary>
     public List<string> Processes { get; set; } = new();
 }
 

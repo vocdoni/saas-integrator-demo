@@ -58,17 +58,17 @@ BODY=$(cat <<JSON
   "startDate":"$NOW","endDate":"$END","maxCensusSize":$MAXSIZE}}
 JSON
 )
-DRAFT=$(curl -s -m 30 -X POST "$B/process" -H "$H" -H "$CT" -d "$BODY" | tr -d '"')
-case "$DRAFT" in
-  ""|*error*|*'{'*) echo "create process failed: $DRAFT"; exit 1 ;;
+PROCESS=$(curl -s -m 30 -X POST "$B/process" -H "$H" -H "$CT" -d "$BODY" | tr -d '"')
+case "$PROCESS" in
+  ""|*error*|*'{'*) echo "create process failed: $PROCESS"; exit 1 ;;
 esac
-echo "draft  = $DRAFT"
+echo "process = $PROCESS"
 
-# --- publish (async) and poll for the on-chain process id -------------------
-curl -s -m 30 -o /dev/null -X POST "$B/process/$DRAFT/publish" -H "$H"
+# --- publish (async) and poll until the on-chain election id is assigned -----
+curl -s -m 30 -o /dev/null -X POST "$B/process/$PROCESS/publish" -H "$H"
 ONCHAIN=""
 for i in $(seq 1 20); do
-  ONCHAIN=$(curl -s -m 15 "$B/process/$DRAFT" -H "$H" | jq -r '.address // empty')
+  ONCHAIN=$(curl -s -m 15 "$B/process/$PROCESS" -H "$H" | jq -r '.address // empty')
   [ -n "$ONCHAIN" ] && break
   sleep 2
 done
@@ -76,5 +76,6 @@ done
 
 echo ""
 echo "✓ process created & published on the existing census"
-echo "  on-chain process id : $ONCHAIN"
-echo "  results             : GET $B/process/$ONCHAIN/results"
+echo "  process id (status/results) : $PROCESS"
+echo "  on-chain election id        : $ONCHAIN  (voting flow only)"
+echo "  results                     : GET $B/process/$PROCESS/results"

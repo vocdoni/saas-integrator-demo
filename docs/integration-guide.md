@@ -179,8 +179,8 @@ CENSUS=$(curl -s "${auth[@]}" -X POST "$B/census" \
 curl -s "${auth[@]}" -X POST "$B/census/$CENSUS/group/$GROUP/publish" \
   -d '{"authFields":["memberNumber"],"weighted":false}' >/dev/null
 
-# 6. Create a draft yes/no process.
-DRAFT=$(curl -s "${auth[@]}" -X POST "$B/process" -d "{
+# 6. Create a yes/no process.
+PROCESS=$(curl -s "${auth[@]}" -X POST "$B/process" -d "{
   \"orgAddress\":\"$ORG\",\"censusId\":\"$CENSUS\",
   \"metadata\":{\"title\":\"Repaint the fence?\"},
   \"electionParams\":{
@@ -193,17 +193,15 @@ DRAFT=$(curl -s "${auth[@]}" -X POST "$B/process" -d "{
     \"electionType\":{\"autostart\":true,\"interruptible\":true},
     \"startDate\":\"2026-06-25T14:30:00Z\",\"endDate\":\"2026-07-02T14:30:00Z\",
     \"maxCensusSize\":1000
-  }}" | jq -r .)   # POST /process returns the draft id as a bare JSON string
+  }}" | jq -r .)   # POST /process returns the ProcessID as a bare JSON string
 
-# 7. Publish on-chain (async) and poll the job for the on-chain process id.
-PJOB=$(curl -s "${auth[@]}" -X POST "$B/process/$DRAFT/publish" | jq -r .jobId)
+# 7. Publish on-chain (async); wait for the job to finish.
+PJOB=$(curl -s "${auth[@]}" -X POST "$B/process/$PROCESS/publish" | jq -r .jobId)
 until [ "$(curl -s "$B/jobs/$PJOB" | jq -r .status)" = "completed" ]; do sleep 2; done
-PROCESS=$(curl -s "$B/jobs/$PJOB" | jq -r .result.address)
-echo "on-chain process: $PROCESS"
 
 # ... voters cast ballots client-side via @vocdoni/sdk ...
 
-# 8. Read results (public, no auth needed).
+# 8. Read results (public, no auth needed) — addressed by the ProcessID.
 curl -s "$B/process/$PROCESS/results" | jq
 ```
 
@@ -241,8 +239,8 @@ census = post("/census", {"orgAddress": org, "authFields": ["memberNumber"]}).js
 post(f"/census/{census}/group/{group}/publish",
      {"authFields": ["memberNumber"], "weighted": False})
 
-# 6. draft process
-draft = post("/process", {
+# 6. create the process
+process = post("/process", {
     "orgAddress": org, "censusId": census,
     "metadata": {"title": "Repaint the fence?"},
     "electionParams": {
@@ -257,13 +255,12 @@ draft = post("/process", {
         "maxCensusSize": 1000,
     }}).json()           # bare JSON string
 
-# 7. publish (async) → poll job → on-chain id
-pjob = post(f"/process/{draft}/publish").json()["jobId"]
+# 7. publish (async) → wait for the job
+pjob = post(f"/process/{process}/publish").json()["jobId"]
 while get(f"/jobs/{pjob}").json()["status"] != "completed":
     time.sleep(2)
-process = get(f"/jobs/{pjob}").json()["result"]["address"]
 
-# 8. results
+# 8. results — addressed by the ProcessID
 print(get(f"/process/{process}/results").json())
 ```
 
@@ -306,13 +303,12 @@ var org = post.apply("/integrator/organizations",
 // 3. group        → POST /organizations/{addr}/groups {"title":...,"includeAllMembers":true} → "id"
 // 4. census       → POST /census {"orgAddress":...,"authFields":["memberNumber"]} → "id"
 // 5. group-publish→ POST /census/{id}/group/{groupId}/publish {"authFields":["memberNumber"],"weighted":false}
-// 6. draft        → POST /process { ...electionParams... } → bare JSON string
-// 7. publish      → POST /process/{draft}/publish → "jobId"; poll /jobs/{jobId} until status=="completed"
-//                   then read result.address
+// 6. process      → POST /process { ...electionParams... } → bare JSON string (the ProcessID)
+// 7. publish      → POST /process/{process}/publish → "jobId"; poll /jobs/{jobId} until status=="completed"
 // 8. results      → GET /process/{process}/results
 ```
 The flow is identical to the curl/Python versions above; only the JSON (de)serialization differs. Use
-Jackson or Gson to read the `address`, `jobId`, `id`, and `result.address` fields.
+Jackson or Gson to read the `address`, `jobId`, and `id` fields.
 </details>
 
 <details><summary><b>C#</b> — the same flow</summary>
@@ -349,8 +345,8 @@ var group = (await Post($"/organizations/{org}/groups",
 var census = (await Post("/census", new { orgAddress = org, authFields = new[] { "memberNumber" } })).GetProperty("id").GetString();
 await Post($"/census/{census}/group/{group}/publish", new { authFields = new[] { "memberNumber" }, weighted = false });
 
-// 6. draft process
-var draft = (await Post("/process", new {
+// 6. create the process
+var process = (await Post("/process", new {
     orgAddress = org, censusId = census,
     metadata = new { title = "Repaint the fence?" },
     electionParams = new {
@@ -363,16 +359,15 @@ var draft = (await Post("/process", new {
         electionType = new { autostart = true, interruptible = true },
         startDate = "2026-06-25T14:30:00Z", endDate = "2026-07-02T14:30:00Z",
         maxCensusSize = 1000,
-    }})).GetString();   // bare JSON string
+    }})).GetString();   // bare JSON string (the ProcessID)
 
-// 7. publish (async) → poll job → on-chain id
-var pjob = (await Post($"/process/{draft}/publish", null)).GetProperty("jobId").GetString();
+// 7. publish (async) → wait for the job
+var pjob = (await Post($"/process/{process}/publish", null)).GetProperty("jobId").GetString();
 JsonElement j;
 do { await Task.Delay(2000); j = await Get($"/jobs/{pjob}"); }
 while (j.GetProperty("status").GetString() != "completed");
-var process = j.GetProperty("result").GetProperty("address").GetString();
 
-// 8. results
+// 8. results — addressed by the ProcessID
 Console.WriteLine(await Get($"/process/{process}/results"));
 ```
 </details>
@@ -624,10 +619,11 @@ curl "${auth[@]}" "$B/census/$CENSUS/participants"
 
 ### Voting process
 
-A **process** is an election. You create it as a **draft** (off-chain, fully editable), then
-**publish** it on-chain (async). Voters then cast ballots; you read results.
+A **process** is an election. You create it (off-chain and fully editable at first), then
+**publish** it on-chain (async). Voters then cast ballots; you read results. One **ProcessID**
+identifies it throughout — `POST /process` returns it and you reuse it for publish, status, and results.
 
-**Create a draft**
+**Create the process**
 ```bash
 curl "${auth[@]}" -X POST "$B/process" -d "{
   \"orgAddress\": \"$ORG\",
@@ -652,7 +648,7 @@ curl "${auth[@]}" -X POST "$B/process" -d "{
 }"
 ```
 ```text
-"665f0c…"   ← POST /process returns the draft id as a BARE JSON string
+"665f0c…"   ← POST /process returns the ProcessID as a BARE JSON string
 ```
 
 Field notes:
@@ -666,12 +662,13 @@ Field notes:
 
 **Publish on-chain (async)**
 ```bash
-curl "${auth[@]}" -X POST "$B/process/$DRAFT/publish"
+curl "${auth[@]}" -X POST "$B/process/$PROCESS/publish"
 ```
 ```jsonc
 { "jobId": "a1b2c3…" }   // 202 Accepted — the on-chain work happens on a worker
 ```
-Poll the job until it completes, then read the **on-chain process id** from `result.address`:
+Poll the job until it completes. Its `result.address` is the **on-chain election id** — an internal
+value you can ignore here; it surfaces again only when wiring the voter signing flow below:
 ```bash
 curl "$B/jobs/$JOBID"
 ```
@@ -679,13 +676,14 @@ curl "$B/jobs/$JOBID"
 { "jobId": "a1b2c3…", "type": "publish_process", "status": "completed",
   "result": { "address": "0x9f2c…", "status": "READY" } }
 ```
-Publishing is **idempotent**: if the draft is already published, you get `200` with
+Publishing is **idempotent**: if the process is already published, you get `200` with
 `{ "address", "status" }` directly instead of a new job.
 
-> **Tip:** the on-chain id in `result.address` is the **process id** you'll use for status, results,
-> bundles, and votes from here on.
+> **Tip:** keep using the **ProcessID** (`$PROCESS`, the 24-hex id `POST /process` returned) for
+> status, results, metadata, and the bundle — the same id, before and after publishing. The on-chain
+> election id in `result.address` only surfaces client-side, when the voter signs their ballot.
 
-**Change status** — also async (`ready`, `paused`, `ended`, `canceled`).
+**Change status** — also async (`ready`, `paused`, `ended`, `canceled`). Uses the **ProcessID**.
 ```bash
 curl "${auth[@]}" -X PUT "$B/process/$PROCESS/status" -d '{"status":"ended"}'
 ```
@@ -700,7 +698,8 @@ Voting is **voter-facing and cryptographic**, and it's the one place you hand of
 CSP (Credential Service Provider) endpoints; the SDK does the ballot encoding and transaction signing.
 
 1. **Bundle the process** (server-side, with your key). A bundle is the voter-facing entry point and
-   ties the process(es) to the census.
+   ties the process(es) to the census. Reference each process by its **ProcessID** — since saas-backend
+   #554 the bundle resolves it to the on-chain id for you (passing the on-chain id still works too).
    ```bash
    curl "${auth[@]}" -X POST "$B/process/bundle" \
      -d "{\"censusId\":\"$CENSUS\",\"processes\":[\"$PROCESS\"]}"
@@ -736,9 +735,10 @@ CSP (Credential Service Provider) endpoints; the SDK does the ballot encoding an
    Each token can sign each process **once** (no double-voting).
 
 4. **Relay the signed vote** to the chain (public, async). The SDK produces the signed transaction
-   payload; you (or the SDK) relay it:
+   payload; you (or the SDK) relay it. The target process is read from the signed envelope, so the
+   path carries no id:
    ```bash
-   curl -X POST "$B/process/$PROCESS/vote" -H "Content-Type: application/json" \
+   curl -X POST "$B/vote" -H "Content-Type: application/json" \
      -d '{"txPayload":"<hex of the signed vote tx>"}'
    ```
    ```jsonc
@@ -750,10 +750,10 @@ CSP (Credential Service Provider) endpoints; the SDK does the ballot encoding an
 > `@vocdoni/sdk`. This repo's web app displays the process and defers casting to the SDK.
 
 **Gotchas**
-- `POST /process` returns a **bare string** (the draft id), not an object.
+- `POST /process` returns a **bare string** (the ProcessID), not an object.
 - Publish and status changes are **jobs** — read the outcome from `/jobs/{jobId}`, not the POST body.
-- The draft id (Mongo id) and the **on-chain id** (`result.address`) are different. Use the on-chain
-  id for status, results, bundles, and votes.
+- Address the process by its **ProcessID** for status, results, metadata, and the bundle. The on-chain
+  election id (`result.address`) is needed only client-side, to sign voter payloads.
 
 ### Results & Jobs
 
@@ -769,7 +769,7 @@ curl "$B/jobs/$JOBID"     # public — the 32-byte job id is the capability
   "type": "publish_process",          // org_members | census_participants | publish_process |
                                       //   set_process_status | relay_vote
   "status": "completed",              // pending | completed | failed
-  "result": { "address": "0x9f2c…",   // on publish: the on-chain process id
+  "result": { "address": "0x9f2c…",   // on publish: the on-chain election id (voting flow only)
               "status": "READY",      // on status change: the new status
               "voteID": "" },         // on relay_vote: the vote nullifier
   "error": "" }                       // populated only when status == failed
@@ -831,9 +831,11 @@ A one-screen field guide to the sharp edges, all of which this repo hit:
 6. **Delete members is the plural path** `DELETE /organizations/{addr}/members` with a body of `ids`.
 7. **Free tier = 1 managed org.** Deleting one frees the slot (and the cascade reclaims quota), but is
    blocked with `409` while elections are still active.
-8. **Draft id ≠ on-chain id.** After publish, use `result.address` for everything downstream.
+8. **One ProcessID throughout.** Use the ProcessID (from `POST /process`) for status, results,
+   metadata, and the bundle — before and after publish. The on-chain election id (`result.address`)
+   is only used client-side, to sign voter payloads.
 9. **The API relays votes; it doesn't build them.** Ballot encoding and signing are client-side in
-   `@vocdoni/sdk`.
+   `@vocdoni/sdk`. Relay is path-less: `POST /vote` (the signed envelope names the process).
 10. **Read the results matrix as `results[question][choice]`**, values are strings.
 
 ## Where to go next

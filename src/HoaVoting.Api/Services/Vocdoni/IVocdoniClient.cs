@@ -23,13 +23,22 @@ public interface IVocdoniClient
     Task<PublishedCensusResponse> PublishCensusGroupAsync(
         string censusId, string groupId, List<string> authFields, List<string> twoFaFields, CancellationToken ct = default);
 
+    /// <summary>Creates a process and returns its 24-hex ProcessID (the handle for status/results/metadata).</summary>
     Task<string> CreateProcessAsync(CreateProcessRequest request, CancellationToken ct = default);
 
-    /// <summary>Publishes a draft process and returns its on-chain (Vochain) process id.</summary>
-    Task<string> PublishProcessAsync(string draftProcessId, CancellationToken ct = default);
+    /// <summary>
+    /// Publishes a process on-chain and waits until it is live. The integrator addresses the process by
+    /// its ProcessID everywhere (status/results/metadata and the bundle), so the on-chain election id is
+    /// not returned — see saas-backend #551 and #554.
+    /// </summary>
+    Task PublishProcessAsync(string processId, CancellationToken ct = default);
 
-    /// <summary>Creates a process bundle for the census + processes; returns the bundle id.</summary>
+    /// <summary>Creates a process bundle from the census + ProcessIDs; returns the bundle id.</summary>
     Task<string> CreateBundleAsync(string censusId, List<string> processIds, CancellationToken ct = default);
+
+    /// <summary>Changes a process status (by ProcessID).</summary>
     Task SetProcessStatusAsync(string processId, string status, CancellationToken ct = default);
+
+    /// <summary>Reads a process tally (by ProcessID).</summary>
     Task<ProcessResultsResponse> GetResultsAsync(string processId, CancellationToken ct = default);
 }
