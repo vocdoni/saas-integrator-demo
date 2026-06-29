@@ -29,8 +29,6 @@ export default function Proposals({ assoc }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [results, setResults] = useState({})
-  // Eligible voters = the memberbase the census is built from. Tally bars fill against this.
-  const [eligible, setEligible] = useState(0)
 
   const base = `/associations/${assoc.id}/proposals`
 
@@ -46,9 +44,6 @@ export default function Proposals({ assoc }) {
   }
   useEffect(() => {
     load()
-    api(`/associations/${assoc.id}/homeowners`)
-      .then((m) => setEligible(m.length))
-      .catch(() => setEligible(0))
   }, [assoc.id])
 
   const setChoice = (i, v) => setForm((f) => ({ ...f, choices: f.choices.map((c, j) => (j === i ? v : c)) }))
@@ -205,9 +200,11 @@ export default function Proposals({ assoc }) {
                     <div className="results-meta">
                       On-chain status <strong>{results[p.id].status}</strong> ·{' '}
                       <span className="num">{results[p.id].voteCount}</span> vote{results[p.id].voteCount === 1 ? '' : 's'}
-                      {eligible > 0 && <> of <span className="num">{eligible}</span> eligible</>}
+                      {results[p.id].censusSize > 0 && (
+                        <> of <span className="num">{results[p.id].censusSize}</span> eligible</>
+                      )}
                     </div>
-                    <Tally result={results[p.id]} choices={p.choices} eligible={eligible} />
+                    <Tally result={results[p.id]} choices={p.choices} />
                   </div>
                 )}
               </li>
@@ -241,14 +238,14 @@ function VotingLink({ processId }) {
   )
 }
 
-// Tally bars for the first (only) question, filled against the eligible voter count (the
-// memberbase the census was built from), so each bar shows turnout share — not share of the
-// leading choice. Falls back to the leading tally if the eligible count is unknown.
-function Tally({ result, choices, eligible }) {
+// Tally bars for the first (only) question, filled against the census size (eligible voters,
+// from the demo API), so each bar shows turnout share — not share of the leading choice. Falls
+// back to the leading tally if the census size is unavailable.
+function Tally({ result, choices }) {
   const row = result.results?.[0]
   if (!row) return null
   const nums = row.map((v) => Number(v) || 0)
-  const denom = eligible > 0 ? eligible : Math.max(1, ...nums)
+  const denom = result.censusSize > 0 ? result.censusSize : Math.max(1, ...nums)
   return (
     <div className="tally">
       {row.map((v, ci) => (

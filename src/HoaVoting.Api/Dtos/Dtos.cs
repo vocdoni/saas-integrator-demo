@@ -51,7 +51,9 @@ public record ProposalResultsResponse(
     string? Status,
     bool FinalResults,
     int VoteCount,
-    List<List<string>>? Results);
+    List<List<string>>? Results,
+    // Published census size = eligible voters; the tally bars fill against this. Null if unavailable.
+    int? CensusSize);
 
 /// <summary>Public, read-only voting-page payload (no auth).</summary>
 public record VotingInfoResponse(

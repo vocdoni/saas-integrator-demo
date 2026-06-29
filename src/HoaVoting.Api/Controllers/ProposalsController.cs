@@ -146,7 +146,11 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         if (p is null) return NotFound();
 
         var r = await vocdoni.GetResultsAsync(p.VocdoniProcessId, ct);
-        return new ProposalResultsResponse(p.VocdoniProcessId, r.Status, r.FinalResults, r.VoteCount, r.Results);
+        // Census size lives on the process detail, not the results payload — fetch it best-effort.
+        int? censusSize = null;
+        try { censusSize = await vocdoni.GetCensusSizeAsync(p.VocdoniProcessId, ct); }
+        catch (VocdoniApiException) { /* leave null; the tally falls back client-side */ }
+        return new ProposalResultsResponse(p.VocdoniProcessId, r.Status, r.FinalResults, r.VoteCount, r.Results, censusSize);
     }
 
     private static Dictionary<string, string> Lang(string text) => new() { ["default"] = text };
