@@ -51,6 +51,16 @@ public sealed class AddMembersResponse
 public sealed class OrganizationMembersResponse
 {
     public List<VocdoniOrgMember> Members { get; set; } = new();
+
+    /// <summary>Present on the paginated GET; null on older backends (treat as single page).</summary>
+    public Pagination? Pagination { get; set; }
+}
+
+public sealed class Pagination
+{
+    public int CurrentPage { get; set; }
+    public int LastPage { get; set; }
+    public int TotalItems { get; set; }
 }
 
 public sealed class DeleteMembersRequest
@@ -174,12 +184,12 @@ public sealed class EnqueuedResponse
     public string? JobId { get; set; }
 }
 
-/// <summary>Subset of db.Process. <c>Address</c> is the on-chain Vochain election id (set after publish).</summary>
-public sealed class ProcessDetail
+/// <summary>db.JobStatus of an async transaction job (publish, status change, vote relay).</summary>
+public sealed class JobStatusResponse
 {
-    public string? Id { get; set; }
-    public string? Address { get; set; }
+    /// <summary>One of: pending, completed, failed.</summary>
     public string? Status { get; set; }
+    public string? Error { get; set; }
 }
 
 public sealed class ProcessResultsResponse

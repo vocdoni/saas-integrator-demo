@@ -71,6 +71,76 @@ public class VocdoniClientTests
         Assert.Equal(HttpStatusCode.Conflict, ex.Status);
     }
 
+    [Fact]
+    public async Task ListMembers_walks_every_page()
+    {
+        // Page 1 of 2 (currentPage < lastPage) then page 2 (last). Without this the client stops at 10.
+        var handler = new SequenceHandler(
+            (HttpStatusCode.OK, """{"members":[{"id":"1"},{"id":"2"}],"pagination":{"currentPage":1,"lastPage":2}}"""),
+            (HttpStatusCode.OK, """{"members":[{"id":"3"}],"pagination":{"currentPage":2,"lastPage":2}}"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var members = await client.ListMembersAsync("0xabc");
+
+        Assert.Equal(new[] { "1", "2", "3" }, members.Select(m => m.Id));
+        Assert.Equal(2, handler.Calls);
+    }
+
+    [Fact]
+    public async Task PublishProcess_polls_job_until_complete()
+    {
+        // 202 enqueue → poll the job until it completes. Publish returns nothing (single-ProcessID model).
+        var handler = new SequenceHandler(
+            (HttpStatusCode.Accepted, """{"jobId":"job1"}"""),
+            (HttpStatusCode.OK, """{"status":"completed"}"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        await client.PublishProcessAsync("proc1");
+
+        Assert.Equal("/jobs/job1", handler.Paths[^1]);
+    }
+
+    [Fact]
+    public async Task PublishProcess_returns_immediately_when_already_published()
+    {
+        // 200 idempotent path: no job poll needed.
+        var handler = new SequenceHandler((HttpStatusCode.OK, """{"address":"cafe","status":"READY"}"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        await client.PublishProcessAsync("proc1");
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task PublishProcess_throws_when_job_fails()
+    {
+        var handler = new SequenceHandler(
+            (HttpStatusCode.Accepted, """{"jobId":"job1"}"""),
+            (HttpStatusCode.OK, """{"status":"failed","error":"out of quota"}"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var ex = await Assert.ThrowsAsync<VocdoniApiException>(() => client.PublishProcessAsync("proc1"));
+        Assert.Contains("out of quota", ex.Message);
+    }
+
+    // Returns each queued response in order (last one repeats), recording every request path.
+    private sealed class SequenceHandler(params (HttpStatusCode Code, string Body)[] responses) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        public List<string> Paths { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var (code, body) = responses[Math.Min(Calls, responses.Length - 1)];
+            Calls++;
+            Paths.Add(request.RequestUri?.AbsolutePath ?? "");
+            return Task.FromResult(new HttpResponseMessage(code)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
+        }
+    }
+
     private sealed class CapturingHandler(HttpStatusCode code, string body) : HttpMessageHandler
     {
         public int Calls { get; private set; }
