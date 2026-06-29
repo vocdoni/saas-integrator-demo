@@ -835,6 +835,7 @@ code {
 }
 
 .bar-fill {
+  display: block; /* a bare <span> is inline and ignores width/height → 0x0; block makes the fill render */
   height: 100%;
   background: var(--brand);
   border-radius: 999px;
