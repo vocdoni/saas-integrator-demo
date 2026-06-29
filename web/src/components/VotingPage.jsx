@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
+import { castVote, bundleNeedsOtp } from '../voting.js'
 
 const fmt = (s) => {
   try {
@@ -23,10 +24,21 @@ export default function VotingPage({ processId }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  // Ballot state.
+  const [selected, setSelected] = useState(null)
+  const [memberNumber, setMemberNumber] = useState('')
+  const [otp, setOtp] = useState('')
+  const [needsOtp, setNeedsOtp] = useState(false)
+  const [casting, setCasting] = useState(false)
+  const [voteErr, setVoteErr] = useState('')
+  const [nullifier, setNullifier] = useState('')
+
+  const reload = async () => setInfo(await api(`/processes/${processId}`))
+
   useEffect(() => {
     ;(async () => {
       try {
-        setInfo(await api(`/processes/${processId}`))
+        await reload()
       } catch (e) {
         setError(e.message === 'HTTP 404' ? 'Voting process not found.' : e.message)
       } finally {
@@ -34,6 +46,36 @@ export default function VotingPage({ processId }) {
       }
     })()
   }, [processId])
+
+  // While voting is open, ask the bundle whether it needs a 2FA OTP (auth-only census → no field).
+  useEffect(() => {
+    if (!info || isFinished(info)) return
+    bundleNeedsOtp({ apiUrl: info.apiUrl, bundleId: info.bundleId })
+      .then(setNeedsOtp)
+      .catch(() => setNeedsOtp(false))
+  }, [info])
+
+  async function submitVote(e) {
+    e.preventDefault()
+    setVoteErr('')
+    setCasting(true)
+    try {
+      const id = await castVote({
+        apiUrl: info.apiUrl,
+        bundleId: info.bundleId,
+        processId: info.processId,
+        choices: [selected],
+        memberNumber: memberNumber.trim(),
+        otp: otp.trim(),
+      })
+      setNullifier(id)
+      await reload() // refresh the vote count
+    } catch (e) {
+      setVoteErr(e.message || 'Could not cast the vote.')
+    } finally {
+      setCasting(false)
+    }
+  }
 
   const shell = (children) => (
     <div className="voting">
@@ -70,19 +112,54 @@ export default function VotingPage({ processId }) {
 
       {done ? (
         <Results results={info.results} choices={info.choices} />
+      ) : nullifier ? (
+        <div className="vote-done">
+          <strong>Your vote was cast.</strong>
+          <p className="mono small muted" title={nullifier}>Nullifier {nullifier.slice(0, 18)}…</p>
+        </div>
       ) : (
-        <>
-          <fieldset className="vote-choices" disabled>
+        <form onSubmit={submitVote}>
+          <fieldset className="vote-choices">
             <legend className="eyebrow">Choices</legend>
             {info.choices.map((c, i) => (
               <label key={i} className="vote-choice">
-                <input type="radio" name="choice" />
+                <input
+                  type="radio"
+                  name="choice"
+                  checked={selected === i}
+                  onChange={() => setSelected(i)}
+                />
                 <span>{c}</span>
               </label>
             ))}
           </fieldset>
-          <div className="vote-soon">Voting from this page will be available soon.</div>
-        </>
+
+          <label>
+            Member number
+            <input
+              value={memberNumber}
+              onChange={(e) => setMemberNumber(e.target.value)}
+              placeholder="Your member number"
+              required
+            />
+          </label>
+          {needsOtp && (
+            <label>
+              Email code
+              <input
+                value={otp}
+                onChange={(e) => setOtp(e.target.value)}
+                placeholder="One-time code sent to your email"
+                required
+              />
+            </label>
+          )}
+
+          {voteErr && <div className="error">{voteErr}</div>}
+          <button disabled={casting || selected === null || !memberNumber.trim()}>
+            {casting ? 'Casting vote…' : 'Cast vote'}
+          </button>
+        </form>
       )}
 
       <p className="mono small muted" style={{ marginTop: 14 }} title={info.processId}>

@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@vocdoni/api-client": "^0.0.1",
+    "@vocdoni/api-voting": "^0.0.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

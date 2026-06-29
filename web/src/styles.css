@@ -1020,6 +1020,16 @@ code {
   padding: 11px 14px;
 }
 
+.vote-done {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--paper-inset);
+  border: 1px solid var(--brand);
+  border-radius: var(--r-sm);
+  padding: 14px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

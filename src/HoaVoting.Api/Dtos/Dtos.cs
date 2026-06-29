@@ -57,6 +57,9 @@ public record ProposalResultsResponse(
 public record VotingInfoResponse(
     string ProcessId,
     string BundleId,
+    // Vocdoni SaaS API base URL — the voting page casts ballots client-side via the integrator SDK,
+    // which talks straight to this API (CSP auth/sign/relay). Never the chain directly.
+    string ApiUrl,
     string Title,
     string Description,
     List<string> Choices,
