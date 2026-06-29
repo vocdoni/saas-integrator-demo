@@ -344,9 +344,13 @@ input[type='datetime-local'] {
   width: 100%;
 }
 
-input[type='checkbox'] {
+input[type='checkbox'],
+input[type='radio'] {
   width: 16px;
   height: 16px;
+  padding: 0;
+  border: none;
+  background: none;
   accent-color: var(--brand);
   flex: none;
 }
