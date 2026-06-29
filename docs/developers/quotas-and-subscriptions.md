@@ -1,4 +1,9 @@
-# Quotas and subscriptions
+---
+title: Quotas and subscriptions
+lead: Each organization has a subscription that sets which features are available and how much it can use. Read it to adapt your integration and to show plan limits to your users.
+group: integrator_platform
+order: 30
+---
 
 Each organization has a **subscription** that defines the features it can use and its usage limits.
 Read it to adapt your integration — gate options in your UI, show plan limits to users, and avoid
@@ -56,7 +61,7 @@ The `subscriptionDetails` object reports the subscription status, plan, census c
 
 As an integrator you also have **provisioning limits**, separate from any single org's subscription —
 read them from `GET /integrator` (see
-[Managed organizations → Quota and usage](./managed-organizations.md#quota-and-usage)):
+[Managed organizations → Quota and usage](/developers/docs/managed-organizations#quota-and-usage)):
 
 - The **free tier allows one managed organization**; deleting it frees the slot (the cascade rolls back
   your usage counters).

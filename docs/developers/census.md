@@ -1,4 +1,9 @@
-# Census
+---
+title: Census
+lead: A census is the list of who can vote in an election and how they prove who they are. Publishing a census produces a cryptographic root that binds the eligible voters to a process.
+group: core_concepts
+order: 30
+---
 
 A **census** is the eligible-voter list for an election, anchored to a cryptographic **root** that the
 election binds to. When you create a census you also choose **how voters prove who they are**.
@@ -64,7 +69,7 @@ Either way you get the published census:
 { "root": "deadbeef…", "size": 1, "uri": "https://…" }
 ```
 
-The `size` is the eligible-voter count — useful later for turnout (see [Results](./results.md)). Set
+The `size` is the eligible-voter count — useful later for turnout (see [Results](/developers/docs/results)). Set
 `"weighted": true` to make each member's `weight` count as vote weight.
 
 <details><summary><b>C#</b> / <b>Python</b> — auth-only via group</summary>
@@ -78,6 +83,10 @@ post(f"/census/{census}/group/{group}/publish",
      {"authFields": ["memberNumber"], "weighted": False})
 ```
 </details>
+
+> [!NOTE] Weighted voting
+> Set `"weighted": true` when publishing to make each member's `weight` field count as their vote
+> weight — use it for shareholder meetings or any vote where members do not count equally.
 
 ## Inspecting participants
 

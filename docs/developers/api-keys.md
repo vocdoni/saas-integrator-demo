@@ -1,4 +1,9 @@
-# API keys
+---
+title: API keys
+lead: API keys let your backend authenticate without a password. Each key belongs to an organization, carries a set of scopes and an optional expiry, and can be revoked at any time.
+group: integrator_platform
+order: 20
+---
 
 An **API key** authenticates your backend without a password. The key *is* your integrator identity:
 the server resolves your integrator organization from it, which is why the integrator endpoints take no
@@ -30,6 +35,7 @@ integration needs:
 The member / census / process endpoints inside a managed org are authorized by your key acting as that
 org's admin (it created it), so they need no extra scope beyond the election lifecycle itself.
 
+> [!TIP] Least privilege
 > Grant the minimum a workload needs, use a separate key per environment, and rotate keys
 > periodically. The available scopes are shown in the API Dashboard during key creation.
 
@@ -54,6 +60,7 @@ curl "${auth[@]}" -X POST "$B/organizations/$INTEGRATOR/apikeys" -d '{
   "revoked": false }
 ```
 
+> [!WARNING] Store the secret now
 > **The secret cannot be retrieved later.** Store it in a secret manager immediately. If it's lost,
 > revoke the key and create a new one — afterwards only metadata (id, prefix, scopes, timestamps)
 > remains.

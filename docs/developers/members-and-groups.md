@@ -1,8 +1,13 @@
-# Members and groups
+---
+title: Members and groups
+lead: Members are the people in your organization. Import them once, organize them into groups, and reuse them to build censuses for many elections.
+group: core_concepts
+order: 20
+---
 
 **Members** are an organization's people — your customer's voters. **Groups** are named subsets of
 members, and a group is also the **bridge that lets you publish an auth-only census** (see
-[Census](./census.md)).
+[Census](/developers/docs/census)).
 
 ## Adding members
 
@@ -50,8 +55,9 @@ while get(f"/organizations/{org}/members/job/{job}").json()["progress"] < 100:
 ```
 </details>
 
+> [!WARNING] Wait for the import job
 > Don't build the census until the members-job reaches `progress: 100` — the participants won't be
-> there yet. See [Jobs](./jobs.md) for the full job model.
+> there yet. See [Jobs](/developers/docs/jobs) for the full job model.
 
 ## Listing members
 
@@ -122,4 +128,4 @@ group = post(f"/organizations/{org}/groups",
 - Listing is **paginated** — walk the pages.
 - Delete is `DELETE /organizations/{addr}/members` (**plural**), with `{ "ids": [...] }`.
 - For an **auth-only** census, each `memberNumber` must be **unique** — it becomes the voting
-  credential (see [Census](./census.md)).
+  credential (see [Census](/developers/docs/census)).

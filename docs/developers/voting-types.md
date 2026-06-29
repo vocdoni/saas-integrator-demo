@@ -1,9 +1,14 @@
-# Voting types
+---
+title: Voting types
+lead: How to shape a ballot - single choice, multiple questions, rating, approval, ranked, and weighted or quadratic voting - through the electionParams vote type. Each type is the same create-process call with different voteType fields; this page maps each one to its ballot shape and how its results read.
+group: api_reference
+order: 20
+---
 
 The `voteType` object inside a process's `electionParams` (see
-[Voting processes](./voting-processes.md#vote-type)) shapes the ballot. A handful of fields express
+[Voting processes](/developers/docs/voting-processes#vote-type)) shapes the ballot. A handful of fields express
 every common election kind. This page gives the recipe for each: the `voteType`, the **ballot array** a
-voter submits, and how to read the [results](./results.md) matrix.
+voter submits, and how to read the [results](/developers/docs/results) matrix.
 
 ## The fields
 
@@ -17,7 +22,7 @@ voter submits, and how to read the [results](./results.md) matrix.
 
 A **ballot** is an array of natural numbers, one entry per field. **Results** are a histogram:
 `results[field][value]` = how many voters put `value` in `field`. Per-option tallies are computed from
-that — the reading differs by type (covered below and in [Results](./results.md)).
+that — the reading differs by type (covered below and in [Results](/developers/docs/results)).
 
 ## Single choice
 
@@ -39,8 +44,9 @@ Approve any subset of N options. One `0/1` field **per option**.
 "voteType": { "maxCount": 3, "maxValue": 1, "uniqueChoices": false }   // N options → maxCount = N
 ```
 
-> `uniqueChoices` **must be `false`**. A ballot that approves more than one option repeats the value
-> `1`, which `uniqueChoices: true` rejects — leaving voters unable to select multiple options.
+> [!WARNING] uniqueChoices must be false
+> A ballot that approves more than one option repeats the value `1`, which `uniqueChoices: true`
+> rejects — leaving voters unable to select multiple options.
 
 - **Ballot:** `[v0, v1, …, vN-1]`, each `0` or `1` — e.g. `[1,0,1]` approves options 0 and 2.
 - **Results:** one field per option, each a `[#voted-0, #voted-1]` histogram. An option's approval
@@ -60,7 +66,7 @@ Rank N options, each rank used once.
 
 - **Ballot:** `[rank0, rank1, …]`, a permutation — `uniqueChoices: true` enforces "no rank used twice".
 - **Results:** index-weighted — for each field multiply each count by its column index and sum to get
-  that option's score (see [Results](./results.md#interpretation)).
+  that option's score (see [Results](/developers/docs/results#interpretation)).
 
 ## Quadratic
 
@@ -98,7 +104,7 @@ Several independent questions, one choice each (e.g. electing CEO, COO, CFO).
 - Provide one entry in `questions` **per field**; the ballot has one value per question.
 - **Ballot:** `[choiceQ0, choiceQ1, choiceQ2]`.
 - **Results:** one inner array per question; read each as per-choice counts (discrete) — see
-  [Results](./results.md#interpretation).
+  [Results](/developers/docs/results#interpretation).
 
 ---
 

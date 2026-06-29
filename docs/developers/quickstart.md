@@ -1,101 +1,95 @@
-# Quickstart
+---
+title: Quickstart
+lead: Run a full election end to end - create a managed organization, build a census, open a voting process and read the tally. Examples are cURL, with C# and Python variants; any HTTP client works the same way.
+group: get_started
+order: 10
+---
 
 This runs the entire lifecycle once: create a managed organization for a customer, add a voter, build
-an auth-only census, open a yes/no election, publish it on-chain, and read the tally. Any HTTP client
-works the same way — the examples below are curl, C#, and Python.
+an auth-only census, open a yes/no election, publish it on-chain, and read the tally.
 
-The one step omitted here is **casting a ballot**: that's voter-facing client-side cryptography, done
-in the browser by the SDK. The Quickstart proves the full server-side path up to reading results; see
-[Voting processes → Casting a vote](../core-concepts/voting-processes.md#casting-a-vote) for the rest.
+The one step omitted here is **casting a ballot** — voter-facing client-side cryptography, done in the
+browser by the SDK. The Quickstart proves the full server-side path up to reading results; see
+[Voting processes → Casting a vote](/developers/docs/voting-processes#casting-a-vote) for the rest.
 
-## Before you start
+> [!NOTE] Before you start
+> You need a Vocdoni **integrator account** (free tier) and an **API key** minted under your
+> integrator organization with the `managed:write`, `managed:read` and `quota:read` scopes — see
+> [API keys](/developers/docs/api-keys). Every request carries `Authorization: Bearer <your-api-key>`;
+> the key *is* your integrator identity, so the integrator endpoints take no address in the path.
 
-1. A Vocdoni **integrator account** (free tier, via the SaaS dashboard).
-2. An **API key** minted under your integrator organization, carrying the `managed:write`,
-   `managed:read`, and `quota:read` scopes. See [API keys](../managed-platform/api-keys.md).
-3. A **base URL**: `https://saas-api.vocdoni.net` (production), or `https://saas-api-dev.vocdoni.net` /
-   `https://saas-api-stg.vocdoni.net` for dev/staging.
-
+> [!NOTE] One managed organization on the free tier
 > The free tier allows **one managed organization**. Delete it (see
-> [Managed organizations](../managed-platform/managed-organizations.md)) or request more quota to run
-> the Quickstart repeatedly.
+> [Managed organizations](/developers/docs/managed-organizations)) or request more quota to run the
+> Quickstart repeatedly.
+
+:::steps
 
 ## Set up a client
 
-Every request carries `Authorization: Bearer <your-api-key>` and, for writes,
-`Content-Type: application/json`. That is the whole authentication story — the key *is* your
-integrator identity, and the server resolves your integrator organization from it (which is why the
-integrator endpoints take no address in the path).
+Export your key and base URL once; every `curl` below reuses them. Writes also send
+`Content-Type: application/json`.
 
 ```bash
-export VOCDONI_BASE_URL="https://saas-api.vocdoni.net"
+export VOCDONI_BASE_URL="{{API_BASE_URL}}"
 export VOCDONI_API_TOKEN="vsk_your_key_here"
 auth=(-H "Authorization: Bearer $VOCDONI_API_TOKEN" -H "Content-Type: application/json")
 B="$VOCDONI_BASE_URL"
 ```
 
-<details><summary><b>C#</b> (.NET, <code>System.Net.Http</code>)</summary>
+## Create a managed organization
 
-```csharp
-using System.Net.Http.Json;
-using System.Text.Json;
-
-var http = new HttpClient { BaseAddress = new Uri("https://saas-api.vocdoni.net") };
-http.DefaultRequestHeaders.Authorization =
-    new("Bearer", Environment.GetEnvironmentVariable("VOCDONI_API_TOKEN"));
-
-async Task<JsonElement> Post(string path, object? body) =>
-    await (await http.PostAsJsonAsync(path, body)).Content.ReadFromJsonAsync<JsonElement>();
-async Task<JsonElement> Get(string path) => await http.GetFromJsonAsync<JsonElement>(path);
-```
-</details>
-
-<details><summary><b>Python</b> (<code>pip install requests</code>)</summary>
-
-```python
-import os, time, requests
-
-B = "https://saas-api.vocdoni.net"
-s = requests.Session()
-s.headers.update({"Authorization": f"Bearer {os.environ['VOCDONI_API_TOKEN']}",
-                  "Content-Type": "application/json"})
-
-def post(path, body=None): r = s.post(B + path, json=body); r.raise_for_status(); return r
-def get(path):             r = s.get(B + path);             r.raise_for_status(); return r
-```
-</details>
-
-## The end-to-end flow
-
-Each step names the field you carry into the next.
+The integrator is resolved from the key, so this endpoint is path-less. Carry forward the returned
+`address`.
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# 1. Create a managed org for your customer. The integrator is resolved from the key (path-less).
 ORG=$(curl -s "${auth[@]}" -X POST "$B/integrator/organizations" \
   -d '{"type":"association","meta":{"name":"Maple Street HOA"}}' | jq -r .address)
+```
 
-# 2. Add a member. Returns a jobId — bulk member writes are async.
+## Add a member
+
+Bulk member writes are asynchronous: the call returns a `jobId` you poll until `progress: 100`.
+
+```bash
 JOB=$(curl -s "${auth[@]}" -X POST "$B/organizations/$ORG/members" \
   -d '{"members":[{"name":"Alice","memberNumber":"A-101","email":"alice@example.org","weight":"1"}]}' \
   | jq -r .jobId)
 until [ "$(curl -s "${auth[@]}" "$B/organizations/$ORG/members/job/$JOB" | jq -r .progress)" = "100" ]; do sleep 1; done
+```
 
-# 3. Create an "all members" group (the bridge to publishing an auth-only census).
+## Create an all-members group
+
+The group is the bridge to publishing an auth-only census.
+
+```bash
 GROUP=$(curl -s "${auth[@]}" -X POST "$B/organizations/$ORG/groups" \
   -d '{"title":"All voters","includeAllMembers":true}' | jq -r .id)
+```
 
-# 4. Create an auth-only census: voters authenticate by member number, no 2FA.
+## Create an auth-only census
+
+Voters authenticate by member number; no second factor.
+
+```bash
 CENSUS=$(curl -s "${auth[@]}" -X POST "$B/census" \
   -d "{\"orgAddress\":\"$ORG\",\"authFields\":[\"memberNumber\"]}" | jq -r .id)
+```
 
-# 5. Publish the census THROUGH THE GROUP (auth-only requires group-publish).
+## Publish the census through the group
+
+Auth-only censuses must be published **through a group** — the plain `/publish` rejects them.
+
+```bash
 curl -s "${auth[@]}" -X POST "$B/census/$CENSUS/group/$GROUP/publish" \
   -d '{"authFields":["memberNumber"],"weighted":false}' >/dev/null
+```
 
-# 6. Create a yes/no process. POST /process returns the ProcessID as a bare JSON string.
+## Create a voting process
+
+`POST /process` returns the ProcessID as a bare JSON string.
+
+```bash
 PROCESS=$(curl -s "${auth[@]}" -X POST "$B/process" -d "{
   \"orgAddress\":\"$ORG\",\"censusId\":\"$CENSUS\",
   \"metadata\":{\"title\":\"Repaint the fence?\"},
@@ -110,16 +104,69 @@ PROCESS=$(curl -s "${auth[@]}" -X POST "$B/process" -d "{
     \"startDate\":\"2026-07-01T09:00:00Z\",\"endDate\":\"2026-07-08T09:00:00Z\",
     \"maxCensusSize\":1000
   }}" | jq -r .)
+```
 
-# 7. Publish on-chain (async); wait for the job to finish.
+## Publish on-chain
+
+Publishing is asynchronous; poll the job until it completes. Voters then cast ballots client-side with
+the SDK.
+
+```bash
 PJOB=$(curl -s "${auth[@]}" -X POST "$B/process/$PROCESS/publish" | jq -r .jobId)
 until [ "$(curl -s "$B/jobs/$PJOB" | jq -r .status)" = "completed" ]; do sleep 2; done
+```
 
-# ... voters cast ballots client-side with the SDK ...
+## Read the results
 
-# 8. Read results (public, no auth needed) — addressed by the ProcessID.
+Public, no auth — addressed by the ProcessID.
+
+```bash
 curl -s "$B/process/$PROCESS/results" | jq
 ```
+
+:::
+
+> [!TIP] Next steps
+> Read [Members and groups](/developers/docs/members-and-groups) for bulk imports and the members-job,
+> [Census](/developers/docs/census) for auth-only vs. 2FA, [Voting processes](/developers/docs/voting-processes)
+> for parameters, bundles and casting, and [Voting types](/developers/docs/voting-types) for single
+> choice, approval, ranked and quadratic ballots.
+
+## The same flow in C# and Python
+
+The bash steps above translate directly. The client setup defines the `Post`/`Get` helpers the flow
+reuses.
+
+<details><summary><b>C#</b> (.NET, <code>System.Net.Http</code>) — client setup</summary>
+
+```csharp
+using System.Net.Http.Json;
+using System.Text.Json;
+
+var http = new HttpClient { BaseAddress = new Uri("{{API_BASE_URL}}") };
+http.DefaultRequestHeaders.Authorization =
+    new("Bearer", Environment.GetEnvironmentVariable("VOCDONI_API_TOKEN"));
+
+async Task<JsonElement> Post(string path, object? body) =>
+    await (await http.PostAsJsonAsync(path, body)).Content.ReadFromJsonAsync<JsonElement>();
+async Task<JsonElement> Get(string path) => await http.GetFromJsonAsync<JsonElement>(path);
+```
+</details>
+
+<details><summary><b>Python</b> (<code>pip install requests</code>) — client setup</summary>
+
+```python
+import os, time, requests
+
+B = "{{API_BASE_URL}}"
+s = requests.Session()
+s.headers.update({"Authorization": f"Bearer {os.environ['VOCDONI_API_TOKEN']}",
+                  "Content-Type": "application/json"})
+
+def post(path, body=None): r = s.post(B + path, json=body); r.raise_for_status(); return r
+def get(path):             r = s.get(B + path);             r.raise_for_status(); return r
+```
+</details>
 
 <details><summary><b>C#</b> — the same flow</summary>
 
@@ -213,10 +260,3 @@ while get(f"/jobs/{pjob}").json()["status"] != "completed":
 print(get(f"/process/{process}/results").json())
 ```
 </details>
-
-## Next steps
-
-- [Members and groups](../core-concepts/members-and-groups.md) — bulk imports, groups, the members-job.
-- [Census](../core-concepts/census.md) — auth-only vs. 2FA, and why auth-only publishes through a group.
-- [Voting processes](../core-concepts/voting-processes.md) — election parameters, bundles, and casting.
-- [Voting types](../core-concepts/voting-types.md) — single choice, approval, ranked, quadratic, and more.

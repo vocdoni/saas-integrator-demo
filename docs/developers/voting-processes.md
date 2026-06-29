@@ -1,9 +1,14 @@
-# Voting processes
+---
+title: Voting processes
+lead: A process is an election - a set of questions run against a published census, with rules for how votes are cast and when voting opens and closes.
+group: core_concepts
+order: 40
+---
 
-A **process** is an election: one or more questions run against a published [census](./census.md),
+A **process** is an election: one or more questions run against a published [census](/developers/docs/census),
 governed by rules about how votes are cast and when voting opens and closes. You create it off-chain
 (fully editable at first), **publish** it on-chain, voters cast ballots, and you read
-[results](./results.md).
+[results](/developers/docs/results).
 
 One **ProcessID** identifies the election throughout. `POST /process` returns it as a bare JSON
 string, and you reuse the same id for publish, status, results, metadata, and bundling — before and
@@ -38,7 +43,7 @@ PROCESS=$(curl -s "${auth[@]}" -X POST "$B/process" -d "{
 | `title`, `description` | multilang | Shown to voters. `{ "default": "…", "es": "…" }`. |
 | `startDate`, `endDate` | string (ISO 8601) | Voting window. |
 | `electionType` | object | Behavioral flags — see below. |
-| `voteType` | object | Ballot shape — see [Voting types](./voting-types.md). |
+| `voteType` | object | Ballot shape — see [Voting types](/developers/docs/voting-types). |
 | `questions` | array | Each has a `title` and `choices` (each choice a `title` + numeric `value`). |
 | `maxCensusSize` | integer | Upper bound on eligible voters for the process. |
 
@@ -54,7 +59,7 @@ PROCESS=$(curl -s "${auth[@]}" -X POST "$B/process" -d "{
 
 `voteType` shapes the ballot — single choice, approval/multichoice, ranked, quadratic, budget, or
 multi-question. Each shape is a specific combination of `maxCount`, `maxValue`, `uniqueChoices`, and
-cost fields. See **[Voting types](./voting-types.md)** for the recipe and ballot shape of each.
+cost fields. See **[Voting types](/developers/docs/voting-types)** for the recipe and ballot shape of each.
 
 <details><summary><b>C#</b> / <b>Python</b> — create</summary>
 
@@ -93,7 +98,7 @@ process = post("/process", {
 ## Publishing on-chain
 
 Publishing is **asynchronous**: it returns a `jobId` (or `200` directly if already published). Poll
-the [job](./jobs.md) until it completes.
+the [job](/developers/docs/jobs) until it completes.
 
 ```bash
 PJOB=$(curl -s "${auth[@]}" -X POST "$B/process/$PROCESS/publish" | jq -r .jobId)
@@ -178,7 +183,7 @@ it never builds or signs the ballot. The steps:
 ### From the browser with the SDK
 
 In practice you don't call these endpoints by hand — the
-[`@vocdoni/integrator-sdk`](https://github.com/vocdoni/integrator-sdk) wraps all of them. You need the
+[`@vocdoni/integrator-sdk`]({{SDK_URL}}) wraps all of them. You need the
 **apiUrl**, the **bundleId**, and the **ProcessID**; the SDK resolves the on-chain id, generates the
 ephemeral identity, encodes the ballot, signs, relays, and polls:
 
@@ -209,7 +214,7 @@ const nullifier = (await client.jobs.waitFor(jobId)).result?.voteID
 ```
 
 The `choices` array is the on-chain ballot — its shape depends on the voting type. See
-**[Voting types](./voting-types.md)**.
+**[Voting types](/developers/docs/voting-types)**.
 
 ## Gotchas
 

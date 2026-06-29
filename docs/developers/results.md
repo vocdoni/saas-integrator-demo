@@ -1,4 +1,9 @@
-# Results
+---
+title: Results
+lead: Read the tally for a voting process at any time. Results are computed from the protocol and can be independently verified, so you can show live counts and a trustworthy final outcome.
+group: core_concepts
+order: 50
+---
 
 Results are **public** (no auth) and available both while a process runs (a live tally) and after it
 ends (final). You address them by **ProcessID**.
@@ -64,13 +69,13 @@ Yes approved by results[0][1] = 3 ;  No approved by results[1][1] = 2
 
 Reading `results[0]` here (`["0","3"]`) as "Yes 0, No 3" is the classic mistake — each voter can
 approve several options, so iterate the fields, not one field's values. See
-[Voting types](./voting-types.md) for which reading each ballot uses.
+[Voting types](/developers/docs/voting-types) for which reading each ballot uses.
 
 ## Turnout and the census size
 
 `voteCount` is how many ballots were cast. To show **turnout** — what share of the *electorate* voted
 — divide by the eligible-voter count, which is the **published census size**. The results payload does
 not carry it; read it from the process detail (`census.size` on `GET /process/{id}`) or remember the
-`size` returned when you [published the census](./census.md#publishing-a-census). A bar that fills
+`size` returned when you [published the census](/developers/docs/census#publishing-a-census). A bar that fills
 `votesForOption / censusSize` reads as turnout share; one that fills against the leading option always
 shows the winner at 100%, which hides participation.

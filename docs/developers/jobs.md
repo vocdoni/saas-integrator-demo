@@ -1,4 +1,9 @@
-# Jobs
+---
+title: Jobs
+lead: Some operations take longer than a single request should wait - bulk imports, census publishing, process publishing and status changes. These return a job id you poll until the work finishes.
+group: core_concepts
+order: 60
+---
 
 Anything that touches the chain — publishing a process, changing its status, relaying a vote — and
 bulk member imports run **asynchronously**. The write returns a **`jobId`**, and you poll one endpoint
@@ -59,4 +64,4 @@ curl -s "${auth[@]}" "$B/organizations/$ORG/members/job/$JOBID"
 ```
 
 Wait for `progress: 100` (and an empty `errors`) before building a census from the members. See
-[Members and groups](./members-and-groups.md#adding-members).
+[Members and groups](/developers/docs/members-and-groups#adding-members).
