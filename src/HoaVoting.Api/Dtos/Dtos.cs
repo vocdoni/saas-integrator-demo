@@ -38,6 +38,7 @@ public record ProposalResponse(
     string Title,
     string Description,
     List<string> Choices,
+    bool AllowMultiple,
     string Status,
     string VocdoniProcessId,
     string VocdoniCensusId,

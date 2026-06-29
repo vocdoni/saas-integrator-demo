@@ -161,6 +161,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
     private static ProposalResponse ToResponse(Proposal p) => new(
         p.Id, p.AssociationId, p.Title, p.Description,
         JsonSerializer.Deserialize<List<string>>(p.ChoicesJson) ?? [],
+        p.AllowMultiple,
         p.Status.ToString(), p.VocdoniProcessId, p.VocdoniCensusId, p.VocdoniBundleId,
         p.StartDate, p.EndDate, p.CreatedAt);
 

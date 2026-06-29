@@ -204,7 +204,7 @@ export default function Proposals({ assoc }) {
                         <> of <span className="num">{results[p.id].censusSize}</span> eligible</>
                       )}
                     </div>
-                    <Tally result={results[p.id]} choices={p.choices} />
+                    <Tally result={results[p.id]} choices={p.choices} allowMultiple={p.allowMultiple} />
                   </div>
                 )}
               </li>
@@ -238,23 +238,31 @@ function VotingLink({ processId }) {
   )
 }
 
-// Tally bars for the first (only) question, filled against the census size (eligible voters,
-// from the demo API), so each bar shows turnout share — not share of the leading choice. Falls
-// back to the leading tally if the census size is unavailable.
-function Tally({ result, choices }) {
-  const row = result.results?.[0]
-  if (!row) return null
-  const nums = row.map((v) => Number(v) || 0)
+// Per-choice vote counts from the results histogram. Single-choice: one field whose values are the
+// choices → results[0]. Approval (multichoice): one field per choice, each [#voted-0, #voted-1] →
+// each choice's count is field[1].
+function tallyCounts(results, allowMultiple) {
+  if (!results || !results[0]) return null
+  return allowMultiple
+    ? results.map((field) => Number(field?.[1]) || 0)
+    : results[0].map((v) => Number(v) || 0)
+}
+
+// Tally bars filled against the census size (eligible voters), so each bar shows turnout share —
+// not share of the leading choice. Falls back to the leading tally if the census size is unknown.
+function Tally({ result, choices, allowMultiple }) {
+  const nums = tallyCounts(result.results, allowMultiple)
+  if (!nums) return null
   const denom = result.censusSize > 0 ? result.censusSize : Math.max(1, ...nums)
   return (
     <div className="tally">
-      {row.map((v, ci) => (
+      {nums.map((n, ci) => (
         <div className="bar" key={ci}>
           <span className="bar-label">{choices?.[ci] ?? `Choice ${ci}`}</span>
           <span className="bar-track">
-            <span className="bar-fill" style={{ width: `${Math.min(100, (nums[ci] / denom) * 100)}%` }} />
+            <span className="bar-fill" style={{ width: `${Math.min(100, (n / denom) * 100)}%` }} />
           </span>
-          <span className="bar-val">{v}</span>
+          <span className="bar-val">{n}</span>
         </div>
       ))}
     </div>

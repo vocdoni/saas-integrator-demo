@@ -123,7 +123,7 @@ export default function VotingPage({ processId }) {
       </div>
 
       {done ? (
-        <Results results={info.results} choices={info.choices} censusSize={info.censusSize} />
+        <Results results={info.results} choices={info.choices} censusSize={info.censusSize} allowMultiple={info.allowMultiple} />
       ) : nullifier ? (
         <div className="vote-done">
           <strong>Your vote was cast.</strong>
@@ -181,27 +181,34 @@ export default function VotingPage({ processId }) {
   )
 }
 
+// Per-choice counts from the results histogram. Single-choice: results[0] is per-choice. Approval
+// (multichoice): one field per choice, each [#voted-0, #voted-1] → the count is field[1].
+function tallyCounts(results, allowMultiple) {
+  if (!results || !results[0]) return null
+  return allowMultiple
+    ? results.map((field) => Number(field?.[1]) || 0)
+    : results[0].map((v) => Number(v) || 0)
+}
+
 // Final tally, winning choice highlighted. Bars fill against the census size (eligible voters), so
-// each shows turnout share; the winner is still the choice with the most votes. Falls back to the
-// leading tally if the census size is unavailable.
-function Results({ results, choices, censusSize }) {
-  const row = results?.[0]
-  if (!row) return <div className="vote-soon">Results are not available yet.</div>
-  const nums = row.map((v) => Number(v) || 0)
+// each shows turnout share; the winner is the choice with the most votes.
+function Results({ results, choices, censusSize, allowMultiple }) {
+  const nums = tallyCounts(results, allowMultiple)
+  if (!nums) return <div className="vote-soon">Results are not available yet.</div>
   const max = Math.max(...nums, 0)
   if (max === 0) return <div className="vote-soon">No votes were cast.</div>
   const denom = censusSize > 0 ? censusSize : max
   return (
     <div className="tally vote-tally">
-      {row.map((v, ci) => {
-        const win = nums[ci] === max
+      {nums.map((n, ci) => {
+        const win = n === max
         return (
           <div className={`bar${win ? ' win' : ''}`} key={ci}>
             <span className="bar-label">{choices?.[ci] ?? `Choice ${ci}`}</span>
             <span className="bar-track">
-              <span className="bar-fill" style={{ width: `${Math.min(100, (nums[ci] / denom) * 100)}%` }} />
+              <span className="bar-fill" style={{ width: `${Math.min(100, (n / denom) * 100)}%` }} />
             </span>
-            <span className="bar-val">{v}</span>
+            <span className="bar-val">{n}</span>
           </div>
         )
       })}
