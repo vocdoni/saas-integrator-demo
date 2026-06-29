@@ -72,4 +72,6 @@ public record VotingInfoResponse(
     string? OnchainStatus,
     List<List<string>>? Results,
     // Published census size = eligible voters; shown on the page and used to fill the result bars.
-    int? CensusSize);
+    int? CensusSize,
+    // True = approval voting: the ballot lets the voter pick several choices.
+    bool AllowMultiple);

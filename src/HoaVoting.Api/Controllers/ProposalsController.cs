@@ -57,7 +57,9 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
                 MaxCensusSize = memberCount,
                 ElectionType = new ElectionType { Autostart = true, Interruptible = true },
                 VoteType = req.AllowMultiple
-                    ? new VoteType { MaxCount = req.Choices.Count, MaxValue = 1, UniqueChoices = true }
+                    // Approval: one 0/1 field per option, multiple 1s allowed (uniqueChoices MUST be
+                    // false, else repeating a value — e.g. two selected options — is rejected).
+                    ? new VoteType { MaxCount = req.Choices.Count, MaxValue = 1, UniqueChoices = false }
                     : new VoteType { MaxCount = 1, MaxValue = req.Choices.Count - 1 },
                 Questions =
                 [
@@ -89,6 +91,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             VocdoniProcessId = processId,
             VocdoniBundleId = bundleId,
             ChoicesJson = JsonSerializer.Serialize(req.Choices.Select(c => c.Title)),
+            AllowMultiple = req.AllowMultiple,
             StartDate = req.StartDate,
             EndDate = req.EndDate,
             Status = ProposalStatus.Open,

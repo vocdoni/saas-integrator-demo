@@ -24,8 +24,9 @@ export default function VotingPage({ processId }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // Ballot state.
-  const [selected, setSelected] = useState(null)
+  // Ballot state. `selected` holds the chosen choice indices (one for single-choice, several for
+  // multichoice/approval).
+  const [selected, setSelected] = useState([])
   const [memberNumber, setMemberNumber] = useState('')
   const [otp, setOtp] = useState('')
   const [needsOtp, setNeedsOtp] = useState(false)
@@ -55,16 +56,24 @@ export default function VotingPage({ processId }) {
       .catch(() => setNeedsOtp(false))
   }, [info])
 
+  // Toggle a choice. Single-choice replaces the selection; multichoice adds/removes it.
+  const toggleChoice = (i) =>
+    setSelected((s) => (info.allowMultiple ? (s.includes(i) ? s.filter((x) => x !== i) : [...s, i]) : [i]))
+
   async function submitVote(e) {
     e.preventDefault()
     setVoteErr('')
     setCasting(true)
     try {
+      // Ballot encoding: single-choice = [chosenIndex]; approval = one 0/1 per choice.
+      const choices = info.allowMultiple
+        ? info.choices.map((_, i) => (selected.includes(i) ? 1 : 0))
+        : [selected[0]]
       const id = await castVote({
         apiUrl: info.apiUrl,
         bundleId: info.bundleId,
         processId: info.processId,
-        choices: [selected],
+        choices,
         memberNumber: memberNumber.trim(),
         otp: otp.trim(),
       })
@@ -123,14 +132,14 @@ export default function VotingPage({ processId }) {
       ) : (
         <form onSubmit={submitVote}>
           <fieldset className="vote-choices">
-            <legend className="eyebrow">Choices</legend>
+            <legend className="eyebrow">{info.allowMultiple ? 'Choices (select one or more)' : 'Choices'}</legend>
             {info.choices.map((c, i) => (
               <label key={i} className="vote-choice">
                 <input
-                  type="radio"
+                  type={info.allowMultiple ? 'checkbox' : 'radio'}
                   name="choice"
-                  checked={selected === i}
-                  onChange={() => setSelected(i)}
+                  checked={selected.includes(i)}
+                  onChange={() => toggleChoice(i)}
                 />
                 <span>{c}</span>
               </label>
@@ -159,7 +168,7 @@ export default function VotingPage({ processId }) {
           )}
 
           {voteErr && <div className="error">{voteErr}</div>}
-          <button disabled={casting || selected === null || !memberNumber.trim()}>
+          <button disabled={casting || selected.length === 0 || !memberNumber.trim()}>
             {casting ? 'Casting vote…' : 'Cast vote'}
           </button>
         </form>
