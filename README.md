@@ -161,8 +161,10 @@ member numbers fail at publish.
 
 ## Implementation Notes
 
-- **Async publish:** `PublishProcessAsync` polls the process until the on-chain election
-  id is assigned. Marked `ponytail:` — for production, move this to a background job + status field.
+- **Async publish:** publish and status-change return `202 + jobId`; `PublishProcessAsync` /
+  `SetProcessStatusAsync` poll `GET /jobs/{jobId}` until the job completes (failing fast on a failed
+  job). Publish is idempotent: an already-published process returns `200` directly. Marked
+  `ponytail:` — for production, move the poll to a background worker.
 - **Integrator quota:** The free tier allows **1 managed organization**. Multiple associations
   require additional quota or a new integrator account. Deleting an association now frees the slot
   (`DELETE /integrator/organizations/{addr}` rolls back the integrator's usage counters).

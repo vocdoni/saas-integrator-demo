@@ -52,8 +52,17 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
 
     public async Task<List<VocdoniOrgMember>> ListMembersAsync(string orgAddress, CancellationToken ct = default)
     {
-        var resp = await SendAsync<OrganizationMembersResponse>(HttpMethod.Get, $"/organizations/{orgAddress}/members", null, ct);
-        return resp.Members;
+        // The list is paginated (default limit 10); walk every page so large memberbases aren't truncated.
+        var all = new List<VocdoniOrgMember>();
+        for (var page = 1; ; page++)
+        {
+            var resp = await SendAsync<OrganizationMembersResponse>(
+                HttpMethod.Get, $"/organizations/{orgAddress}/members?page={page}&limit=100", null, ct);
+            all.AddRange(resp.Members);
+            if (resp.Members.Count == 0 || resp.Pagination is not { } p || p.CurrentPage >= p.LastPage)
+                break;
+        }
+        return all;
     }
 
     public Task DeleteMembersAsync(string orgAddress, List<string> memberIds, CancellationToken ct = default) =>
@@ -86,26 +95,23 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         await SendAsync<string>(HttpMethod.Post, "/process", request, ct);
 
     /// <summary>
-    /// Publishes a process on-chain and waits until it is live (an on-chain election id is assigned).
-    /// The integrator addresses the process by its 24-hex ProcessID everywhere — status/results/metadata
-    /// (#551) and the bundle (#554) — so the on-chain election id itself is never needed here.
+    /// Publishes a process on-chain and waits until it is live. The integrator addresses the process by
+    /// its 24-hex ProcessID everywhere — status/results/metadata (#551) and the bundle (#554) — so the
+    /// on-chain election id assigned by publish is never needed here.
     /// </summary>
     public async Task PublishProcessAsync(string processId, CancellationToken ct = default)
     {
-        // Publish is async: it returns a jobId (202) and the process goes on-chain a little later.
-        // Poll until the process has an on-chain address, i.e. it is published.
-        // ponytail: simple bounded poll, not a job-status state machine.
-        await SendAsync(HttpMethod.Post, $"/process/{processId}/publish", null, ct);
+        using var resp = await SendCoreAsync(HttpMethod.Post, $"/process/{processId}/publish", null, ct);
 
-        for (var attempt = 0; attempt < 20; attempt++)
-        {
-            var proc = await SendAsync<ProcessDetail>(HttpMethod.Get, $"/process/{processId}", null, ct);
-            if (!string.IsNullOrEmpty(proc.Address))
-                return;
-            await Task.Delay(TimeSpan.FromSeconds(2), ct);
-        }
-        throw new VocdoniApiException(HttpStatusCode.GatewayTimeout,
-            $"process {processId} was not published within the timeout");
+        // 200 = already published (idempotent): nothing to wait for.
+        if (resp.StatusCode == HttpStatusCode.OK)
+            return;
+
+        // 202 = accepted: poll the job until it completes (fails fast on a failed job).
+        var enqueued = await ReadJsonAsync<EnqueuedResponse>(resp, ct);
+        if (string.IsNullOrEmpty(enqueued.JobId))
+            throw new VocdoniApiException(resp.StatusCode, "publish returned neither a result nor a jobId");
+        await PollJobAsync(enqueued.JobId!, ct);
     }
 
     public async Task<string> CreateBundleAsync(string censusId, List<string> processIds, CancellationToken ct = default)
@@ -120,8 +126,34 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
     }
 
     /// <summary>Changes an election's status (e.g. "ended"). <paramref name="processId"/> is the 24-hex ProcessID (#551).</summary>
-    public Task SetProcessStatusAsync(string processId, string status, CancellationToken ct = default) =>
-        SendAsync(HttpMethod.Put, $"/process/{processId}/status", new SetProcessStatusRequest { Status = status }, ct);
+    public async Task SetProcessStatusAsync(string processId, string status, CancellationToken ct = default)
+    {
+        // Status change is async too (202 + jobId); wait for the job so the change is confirmed on-chain.
+        using var resp = await SendCoreAsync(
+            HttpMethod.Put, $"/process/{processId}/status", new SetProcessStatusRequest { Status = status }, ct);
+        if (resp.StatusCode == HttpStatusCode.Accepted)
+        {
+            var enqueued = await ReadJsonAsync<EnqueuedResponse>(resp, ct);
+            if (!string.IsNullOrEmpty(enqueued.JobId))
+                await PollJobAsync(enqueued.JobId!, ct);
+        }
+    }
+
+    /// <summary>Polls GET /jobs/{id} until the async transaction completes; throws on failure or timeout.</summary>
+    // ponytail: bounded poll (~40s), no webhook available. Move to a background worker for production.
+    private async Task PollJobAsync(string jobId, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var job = await SendAsync<JobStatusResponse>(HttpMethod.Get, $"/jobs/{jobId}", null, ct);
+            if (job.Status == "completed")
+                return;
+            if (job.Status == "failed")
+                throw new VocdoniApiException(HttpStatusCode.BadGateway, $"job {jobId} failed: {job.Error}");
+            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        }
+        throw new VocdoniApiException(HttpStatusCode.GatewayTimeout, $"job {jobId} did not complete within the timeout");
+    }
 
     /// <summary>Reads an election's tally. <paramref name="processId"/> is the 24-hex ProcessID (#551), not the on-chain id.</summary>
     public Task<ProcessResultsResponse> GetResultsAsync(string processId, CancellationToken ct = default) =>
@@ -132,6 +164,11 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
     private async Task<T> SendAsync<T>(HttpMethod method, string path, object? body, CancellationToken ct)
     {
         using var resp = await SendCoreAsync(method, path, body, ct);
+        return await ReadJsonAsync<T>(resp, ct);
+    }
+
+    private static async Task<T> ReadJsonAsync<T>(HttpResponseMessage resp, CancellationToken ct)
+    {
         var stream = await resp.Content.ReadAsStreamAsync(ct);
         var value = await JsonSerializer.DeserializeAsync<T>(stream, Json, ct);
         return value ?? throw new VocdoniApiException(resp.StatusCode, "empty response body");
