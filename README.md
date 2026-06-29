@@ -91,13 +91,14 @@ browser stays same-origin (no CORS). `docker compose up --build` brings up both 
 
 - **Backend admin** (`SuperAdmin`) — create and list associations.
 - **Association admin** (`Owner`) — manage the **memberbase** (add/remove homeowners + CSV import)
-  and **voting processes** (create single-choice or **multichoice** ballots with member-number or
-  email-2FA auth, view results, close). Each proposal exposes a **Voting page** link. Results bars
-  fill against the **census size** (turnout share) and show the eligible count.
+  and **voting processes** (create a **single choice**, **multiple choice**, or **ranked** ballot;
+  view results, close). Voters authenticate by member number (no 2FA). Each proposal exposes a
+  **Voting page** link. Results bars fill against the **census size** (turnout share, or the top
+  score for ranked) and show the eligible count.
 - **Public voting page** — `/processes/{processId}` is a no-login page (modeled on
   app.vocdoni.io's `/processes/:id`). It shows the ballot and lets a homeowner **cast a vote**:
-  authenticate by member number (plus an email OTP for 2FA censuses), pick a choice (or several, for
-  multichoice), and submit. Casting runs entirely client-side against the SaaS API via
+  authenticate by member number, then pick one choice (single), several (multiple), or **drag to
+  rank** the options (ranked), and submit. Casting runs entirely client-side against the SaaS API via
   `@vocdoni/integrator-sdk` (see `web/src/voting.js`) — CSP auth → CSP sign → relay `POST /vote` →
   poll for the vote nullifier. Page data comes from `GET /api/processes/{processId}`.
 
@@ -132,7 +133,7 @@ Or locally: `dotnet test`.
 ```bash
 ./e2e.sh                  # admin login → association → memberbase → proposal → results → close
 CSV=path/to.csv ./e2e.sh  # custom memberbase (default: memberbase-test.csv)
-TWOFA=true ./e2e.sh       # email-2FA census instead of no-2FA (needs an Email column)
+VTYPE=ranked ./e2e.sh     # voting type for the proposal: single (default) | multiple | ranked
 ```
 
 Requires `.env` with valid Vocdoni credentials. The script:
@@ -142,9 +143,8 @@ Requires `.env` with valid Vocdoni credentials. The script:
   Number`) as homeowners — idempotent (skips if members already exist).
 - Creates a proposal and waits for the async publish (~10–30s).
 
-By default the proposal uses a **CSP census with no 2FA** (`TWOFA=false`): voters authenticate by
-**member number** alone. Run `TWOFA=true ./e2e.sh` for an email-2FA census (needs an `Email`
-column in the CSV).
+The proposal always uses a **CSP census** where voters authenticate by **member number** alone (no
+2FA). Set `VTYPE` to create a single-choice (default), multiple-choice, or ranked ballot.
 
 **Create a process on an existing census** (`create-process.sh`) — skips all setup
 (org/owner/members) and just creates + publishes a new voting process on a census that already
@@ -159,12 +159,12 @@ TITLE="Budget 2026" ./create-process.sh
 Prints the new ProcessID (used for status/results) and its on-chain election id. Multiple processes
 can share one census.
 
-**How no-2FA publishing works:** the plain `POST /census/{id}/publish` only accepts the 2FA
-census types (`mail`/`sms`/`sms_or_mail`) and rejects auth-only with `census type not found`. The
-backend instead publishes via a **member group** (`POST /census/{id}/group/{groupid}/publish`),
-which supports auth-only censuses and populates participants from the group. Note: with auth-only,
-each `Member Number` must be **unique** (the voting credential is `hash(memberNumber)`) — duplicate
-member numbers fail at publish.
+**How auth-only publishing works:** the plain `POST /census/{id}/publish` only accepts the 2FA
+census types (`mail`/`sms`/`sms_or_mail`) and rejects auth-only (member-number) censuses with
+`census type not found`. The backend instead publishes via a **member group** (`POST
+/census/{id}/group/{groupid}/publish`), which supports auth-only censuses and populates participants
+from the group. Note: each `Member Number` must be **unique** (the voting credential is
+`hash(memberNumber)`) — duplicate member numbers fail at publish.
 
 ## Implementation Notes
 
@@ -182,16 +182,21 @@ member numbers fail at publish.
 - **Census reuse:** multiple processes can target the same published census (see `create-process.sh`).
 - **Client-side voting:** the web app casts ballots in the browser via `@vocdoni/integrator-sdk`
   (`@vocdoni/api-client` + `@vocdoni/api-voting`), which talk **only** to the SaaS API. The flow lives
-  in `web/src/voting.js` (`castVote`): bundle CSP auth (member number, +OTP for 2FA) → CSP sign over an
-  ephemeral key → relay `POST /vote` → poll the job for the nullifier. The backend only exposes the
-  SaaS API base URL to the page (`VotingInfoResponse.apiUrl`); it never builds or signs ballots.
+  in `web/src/voting.js` (`castVote`): bundle CSP auth (member number) → CSP sign over an ephemeral
+  key → relay `POST /vote` → poll the job for the nullifier. The backend only exposes the SaaS API
+  base URL to the page (`VotingInfoResponse.apiUrl`); it never builds or signs ballots.
 - **Turnout / census size:** result bars fill against the **eligible voter count** (the published
   census size), read from `GET /process/{id}` (`census.size`) and surfaced as `censusSize` on the
   results + public voting payloads. The page shows "N eligible" alongside the vote count.
-- **Multichoice (approval):** `allowMultiple` proposals use approval voting — `voteType
-  {maxCount:N, maxValue:1, uniqueChoices:false}` (a 0/1 field per option; `uniqueChoices` **must** be
-  false or multi-select ballots are rejected). The ballot is `[v0..vN-1]`; results have one field per
-  option (`[#voted-0, #voted-1]`), so each option's count is `results[i][1]` (not `results[0]`).
+- **Voting types** (`votingType`): the owner picks one per proposal, mapped to the Vocdoni `voteType`:
+  - **single** — `{maxCount:1, maxValue:N-1}`; ballot `[chosenIndex]`; results `results[0]` are
+    per-choice counts.
+  - **multiple** (approval) — `{maxCount:N, maxValue:1, uniqueChoices:false}`; ballot `[v0..vN-1]`
+    (1 per pick); each option's count is `results[i][1]`. `uniqueChoices` **must** be false or
+    multi-select ballots are rejected.
+  - **ranked** (linear-weighted) — `{maxCount:N, maxValue:N-1, uniqueChoices:true}`; the voter
+    **drags to sort**, top = best; ballot gives each option a unique rank value (`N-1-position`);
+    results are read as a Borda score per option (`Σ results[i][v]·v`).
 - **Single admin:** The hardcoded admin (from env) is the only one who can register associations.
   Multiple admins would require a lookup table; add when needed.
 
@@ -222,8 +227,8 @@ All endpoints except `/api/auth/login` require a valid JWT bearer token.
 - `POST /api/associations/{id}/proposals` — create (group → census → group-publish → process →
   publish → **bundle**). The published process is wrapped in a new process bundle (stored as
   `vocdoniBundleId`) for the CSP voting flow. Body: `title`, `description`, `choices[]`,
-  `startDate`, `endDate`, `allowMultiple` (default false), `twoFactorAuth` (default false → CSP auth
-  by member number; true → email OTP, needs member emails).
+  `startDate`, `endDate`, `votingType` (`single` (default) | `multiple` | `ranked`). Voters always
+  authenticate by member number (no 2FA).
 - `GET /api/associations/{id}/proposals` — list
 - `GET /api/associations/{id}/proposals/{pid}` — get one
 - `POST /api/associations/{id}/proposals/{pid}/close` — end voting
@@ -231,6 +236,6 @@ All endpoints except `/api/auth/login` require a valid JWT bearer token.
 
 **Public (no auth):**
 - `GET /api/processes/{processId}` — voting-page data for the public `/processes/{processId}` page:
-  title, description, choices, dates, status, `allowMultiple`, and (best-effort) on-chain
+  title, description, choices, dates, status, `votingType`, and (best-effort) on-chain
   `voteCount`, `results`, and `censusSize`. Also returns `bundleId` and `apiUrl` (the SaaS API base
   URL) so the page can cast votes client-side via the integrator SDK.

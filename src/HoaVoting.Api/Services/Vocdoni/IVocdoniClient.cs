@@ -14,14 +14,14 @@ public interface IVocdoniClient
     /// <summary>Creates a member group containing all current org members; returns its id.</summary>
     Task<string> CreateAllMembersGroupAsync(string orgAddress, string title, CancellationToken ct = default);
 
-    Task<string> CreateCensusAsync(string orgAddress, List<string> authFields, List<string> twoFaFields, CancellationToken ct = default);
+    Task<string> CreateCensusAsync(string orgAddress, List<string> authFields, CancellationToken ct = default);
 
     /// <summary>
     /// Publishes a census against a member group. Unlike the plain publish, this path supports
-    /// auth-only (no-2FA) censuses and populates participants from the group.
+    /// auth-only censuses (member-number auth, no 2FA) and populates participants from the group.
     /// </summary>
     Task<PublishedCensusResponse> PublishCensusGroupAsync(
-        string censusId, string groupId, List<string> authFields, List<string> twoFaFields, CancellationToken ct = default);
+        string censusId, string groupId, List<string> authFields, CancellationToken ct = default);
 
     /// <summary>Creates a process and returns its 24-hex ProcessID (the handle for status/results/metadata).</summary>
     Task<string> CreateProcessAsync(CreateProcessRequest request, CancellationToken ct = default);

@@ -53,7 +53,7 @@ Authorization: Bearer {{ownerToken}}
   "choices": [ { "title": "Yes" }, { "title": "No" } ],
   "startDate": "2026-06-24T00:00:00Z",
   "endDate": "2026-07-01T00:00:00Z",
-  "allowMultiple": false
+  "votingType": "single"
 }
 
 @proposalId = {{createProposal.response.body.id}}

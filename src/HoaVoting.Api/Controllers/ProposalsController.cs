@@ -33,15 +33,14 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var memberCount = members.Count(m => m.Id is not null);
         if (memberCount == 0) return BadRequest("Add homeowners before creating a proposal.");
 
-        // CSP-based census: members authenticate by member number; email 2FA is opt-in. We publish
-        // via a member group — that path supports auth-only (no-2FA) censuses, where the plain
-        // /census/{id}/publish would reject them ("census type not found"). The group also populates
-        // census participants from its members, so no separate add-participants call is needed.
+        // Auth-only CSP census: members authenticate by member number alone (no 2FA). We publish via a
+        // member group — that path supports auth-only censuses, where the plain /census/{id}/publish
+        // would reject them ("census type not found"). The group also populates census participants
+        // from its members, so no separate add-participants call is needed.
         List<string> authFields = ["memberNumber"];
-        List<string> twoFaFields = req.TwoFactorAuth ? ["email"] : [];
         var groupId = await vocdoni.CreateAllMembersGroupAsync(org, $"Proposal: {req.Title}", ct);
-        var censusId = await vocdoni.CreateCensusAsync(org, authFields, twoFaFields, ct);
-        await vocdoni.PublishCensusGroupAsync(censusId, groupId, authFields, twoFaFields, ct);
+        var censusId = await vocdoni.CreateCensusAsync(org, authFields, ct);
+        await vocdoni.PublishCensusGroupAsync(censusId, groupId, authFields, ct);
 
         var process = new CreateProcessRequest
         {
@@ -56,11 +55,17 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
                 EndDate = req.EndDate.UtcDateTime.ToString("o"),
                 MaxCensusSize = memberCount,
                 ElectionType = new ElectionType { Autostart = true, Interruptible = true },
-                VoteType = req.AllowMultiple
-                    // Approval: one 0/1 field per option, multiple 1s allowed (uniqueChoices MUST be
+                VoteType = req.VotingType switch
+                {
+                    // Single: one field whose value is the chosen index (0..N-1).
+                    VotingType.Single => new VoteType { MaxCount = 1, MaxValue = req.Choices.Count - 1 },
+                    // Approval: one 0/1 field per option; multiple 1s allowed (uniqueChoices MUST be
                     // false, else repeating a value — e.g. two selected options — is rejected).
-                    ? new VoteType { MaxCount = req.Choices.Count, MaxValue = 1, UniqueChoices = false }
-                    : new VoteType { MaxCount = 1, MaxValue = req.Choices.Count - 1 },
+                    VotingType.Multiple => new VoteType { MaxCount = req.Choices.Count, MaxValue = 1, UniqueChoices = false },
+                    // Ranked (linear-weighted): one field per option, each a unique rank value 0..N-1.
+                    VotingType.Ranked => new VoteType { MaxCount = req.Choices.Count, MaxValue = req.Choices.Count - 1, UniqueChoices = true },
+                    _ => throw new ArgumentOutOfRangeException(nameof(req.VotingType)),
+                },
                 Questions =
                 [
                     new ElectionQuestion
@@ -91,7 +96,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             VocdoniProcessId = processId,
             VocdoniBundleId = bundleId,
             ChoicesJson = JsonSerializer.Serialize(req.Choices.Select(c => c.Title)),
-            AllowMultiple = req.AllowMultiple,
+            VotingType = req.VotingType,
             StartDate = req.StartDate,
             EndDate = req.EndDate,
             Status = ProposalStatus.Open,
@@ -161,7 +166,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
     private static ProposalResponse ToResponse(Proposal p) => new(
         p.Id, p.AssociationId, p.Title, p.Description,
         JsonSerializer.Deserialize<List<string>>(p.ChoicesJson) ?? [],
-        p.AllowMultiple,
+        p.VotingType,
         p.Status.ToString(), p.VocdoniProcessId, p.VocdoniCensusId, p.VocdoniBundleId,
         p.StartDate, p.EndDate, p.CreatedAt);
 

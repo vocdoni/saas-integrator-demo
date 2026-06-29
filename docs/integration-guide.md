@@ -658,9 +658,10 @@ Field notes:
   field. **Single choice** out of N: `maxCount:1, maxValue:N-1` (the ballot is `[chosenIndex]`).
   **Approval / multichoice** (pick any subset of N): `maxCount:N, maxValue:1, uniqueChoices:false`
   (the ballot is `[v0..vN-1]`, a `0/1` per option) — `uniqueChoices` **must** be `false`, or a
-  ballot that selects more than one option is rejected. For richer ballots (ranked, quadratic,
-  budget, multi-question), see the Vocdoni **ballot protocol** docs — the numbers have precise
-  meaning there.
+  ballot that selects more than one option is rejected. **Ranked** (linear-weighted; order all N):
+  `maxCount:N, maxValue:N-1, uniqueChoices:true` (the ballot is `[v0..vN-1]`, each option a **unique**
+  rank value, top = best = `N-1`). For other ballots (quadratic, budget, multi-question), see the
+  Vocdoni **ballot protocol** docs — the numbers have precise meaning there.
 - `electionType.autostart` opens the vote at `startDate`; `interruptible` lets you pause/end it.
 
 **Publish on-chain (async)**
@@ -798,7 +799,7 @@ const { signature, weight } = await client.bundle.sign(
 
 const jobId = await new VotingClient({ client }).vote({
   processId: onchainId,
-  choices,                     // single choice: [chosenIndex]; approval: [v0..vN-1] (1 per pick)
+  choices,                     // single: [chosenIndex]; approval: [v0..vN-1] (1 per pick); ranked: unique rank per option
   chainId: election.chainId,
   signer,
   cspSignature: signature,
@@ -809,9 +810,11 @@ const job = await client.jobs.waitFor(jobId)
 const nullifier = job.result?.voteID               // proof the vote landed
 ```
 
-> **`choices` is the on-chain ballot array** (see the *Voting process* note above): a single-choice
-> ballot is `[chosenIndex]`; an approval ballot is one `0/1` per option, e.g. `[1,0,1]` to approve
-> options 0 and 2. `web/src/voting.js` is the runnable reference for this exact flow.
+> **`choices` is the on-chain ballot array** (see the *Voting process* note above): single-choice is
+> `[chosenIndex]`; approval is one `0/1` per option, e.g. `[1,0,1]` to approve options 0 and 2; ranked
+> gives each option a unique value `0..N-1` (top = `N-1`), e.g. `[1,2,0]` ranks option 1 first. The
+> demo's `web/src/voting.js` is the runnable reference — it uses the **auth-only** path (member number,
+> no OTP step); add the `authStep1` call shown above only for 2FA censuses.
 
 **Gotchas**
 - `POST /process` returns a **bare string** (the ProcessID), not an object.
@@ -887,6 +890,15 @@ Yes approved by results[0][1] = 3 ;  No approved by results[1][1] = 2
 Reading `results[0]` here (`["0","3"]`) and treating it as "Yes 0, No 3" is the classic bug — each
 voter can approve several options, so iterate the fields, not one field's values.
 
+**Ranked reads index-weighted.** Same one-field-per-option matrix, but each field is a histogram over
+the rank values `0..N-1`. Score each option by `Σ_v results[i][v]·v` (a Borda count; higher = more
+preferred, since top rank = highest value):
+
+```
+results = [ ["0","1","2"], ["2","1","0"] ]   # 3 ballots, 3 rank values (0..2), options A / B
+A score = 0·0 + 1·1 + 2·2 = 5 ;  B score = 0·2 + 1·1 + 2·0 = 1   →  A ranks higher
+```
+
 - `finalResults: false` → the election is still open; the tally is provisional.
 - `finalResults: true`  → the election has ended; results are final.
 
@@ -913,10 +925,11 @@ A one-screen field guide to the sharp edges, all of which this repo hit:
    is only used client-side, to sign voter payloads.
 9. **The API relays votes; it doesn't build them.** Ballot encoding and signing are client-side in
    `@vocdoni/integrator-sdk`. Relay is path-less: `POST /vote` (the signed envelope names the process).
-10. **Read the results matrix as `results[question][choice]`**, values are strings — **except
-    approval/multichoice**, where it's one field per option (`[#0,#1]`) and the count is `results[i][1]`.
-11. **Approval voting needs `uniqueChoices:false`** (`maxCount:N, maxValue:1`); leaving it `true`
-    rejects any ballot that selects more than one option.
+10. **Read the results matrix as `results[question][choice]`**, values are strings — **except**
+    approval (one field per option, count `results[i][1]`) and ranked (one field per option,
+    Borda score `Σ_v results[i][v]·v`).
+11. **Approval needs `uniqueChoices:false`** (`maxCount:N, maxValue:1`); **ranked needs
+    `uniqueChoices:true`** (`maxCount:N, maxValue:N-1`). Get these wrong and valid ballots are rejected.
 
 ## Where to go next
 

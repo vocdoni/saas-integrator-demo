@@ -77,17 +77,17 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         return group.Id;
     }
 
-    public async Task<string> CreateCensusAsync(string orgAddress, List<string> authFields, List<string> twoFaFields, CancellationToken ct = default)
+    public async Task<string> CreateCensusAsync(string orgAddress, List<string> authFields, CancellationToken ct = default)
     {
-        var body = new CreateCensusRequest { OrgAddress = orgAddress, AuthFields = authFields, TwoFaFields = twoFaFields };
+        var body = new CreateCensusRequest { OrgAddress = orgAddress, AuthFields = authFields };
         var resp = await SendAsync<CreateCensusResponse>(HttpMethod.Post, "/census", body, ct);
         return resp.Id;
     }
 
     public Task<PublishedCensusResponse> PublishCensusGroupAsync(
-        string censusId, string groupId, List<string> authFields, List<string> twoFaFields, CancellationToken ct = default) =>
+        string censusId, string groupId, List<string> authFields, CancellationToken ct = default) =>
         SendAsync<PublishedCensusResponse>(HttpMethod.Post, $"/census/{censusId}/group/{groupId}/publish",
-            new PublishCensusGroupRequest { AuthFields = authFields, TwoFaFields = twoFaFields, Weighted = false }, ct);
+            new PublishCensusGroupRequest { AuthFields = authFields, Weighted = false }, ct);
 
     public async Task<string> CreateProcessAsync(CreateProcessRequest request, CancellationToken ct = default) =>
         // POST /process returns the 24-hex ProcessID as a bare JSON string. This is the handle for

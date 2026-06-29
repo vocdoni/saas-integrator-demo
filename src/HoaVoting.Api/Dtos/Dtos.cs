@@ -1,3 +1,5 @@
+using HoaVoting.Api.Models;
+
 namespace HoaVoting.Api.Dtos;
 
 // Client-facing DTOs. Vocdoni wire types never leak past the service layer.
@@ -12,7 +14,7 @@ public record AssociationResponse(int Id, string Name, string OwnerEmail, string
 public record AddHomeownerRequest(
     string Name,
     string? Surname,
-    string? Email,          // optional — only needed for email-2FA censuses
+    string? Email,          // optional member contact detail
     string? Phone,
     string MemberNumber,
     string? Weight);
@@ -25,10 +27,8 @@ public record CreateProposalRequest(
     List<ProposalChoice> Choices,
     DateTimeOffset StartDate,
     DateTimeOffset EndDate,
-    bool AllowMultiple = false,
-    // When true, voters confirm via an email OTP. When false, the census is CSP-based with no
-    // 2FA — voters authenticate by member number alone.
-    bool TwoFactorAuth = true);
+    // single (default) | multiple (approval) | ranked. Voters always auth by member number (no 2FA).
+    VotingType VotingType = VotingType.Single);
 
 public record ProposalChoice(string Title);
 
@@ -38,7 +38,7 @@ public record ProposalResponse(
     string Title,
     string Description,
     List<string> Choices,
-    bool AllowMultiple,
+    VotingType VotingType,
     string Status,
     string VocdoniProcessId,
     string VocdoniCensusId,
@@ -74,5 +74,5 @@ public record VotingInfoResponse(
     List<List<string>>? Results,
     // Published census size = eligible voters; shown on the page and used to fill the result bars.
     int? CensusSize,
-    // True = approval voting: the ballot lets the voter pick several choices.
-    bool AllowMultiple);
+    // Ballot kind: single | multiple | ranked — drives the voting-page UI and result interpretation.
+    VotingType VotingType);
