@@ -14,8 +14,9 @@ browser by the SDK. The Quickstart proves the full server-side path up to readin
 
 > [!NOTE] Before you start
 > You need a Vocdoni **integrator account** (free tier) and an **API key** minted under your
-> integrator organization with the `managed:write`, `managed:read` and `quota:read` scopes — see
-> [API keys](/developers/docs/api-keys). Every request carries `Authorization: Bearer <your-api-key>`;
+> integrator organization. To run this whole flow the key needs the `managed:write`, `managed:read`,
+> `quota:read`, `members:write` and `voting:write` scopes — see [API keys](/developers/docs/api-keys).
+> Every request carries `Authorization: Bearer <your-api-key>`;
 > the key *is* your integrator identity, so the integrator endpoints take no address in the path.
 
 > [!NOTE] One managed organization on the free tier

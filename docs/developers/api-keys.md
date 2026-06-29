@@ -31,9 +31,14 @@ integration needs:
 | `managed:write` | Create and delete managed organizations (`POST` / `DELETE /integrator/organizations…`). |
 | `managed:read` | List managed organizations (`GET /integrator/organizations`). |
 | `quota:read` | Read integrator quota and usage (`GET /integrator`). |
+| `members:write` | Manage members and groups inside a managed org (`/organizations/{addr}/members…` and `/groups…`). |
+| `voting:write` | Run the election lifecycle: census, process, bundle, and vote relay (`/census…`, `/process…`, `/vote`). |
 
-The member / census / process endpoints inside a managed org are authorized by your key acting as that
-org's admin (it created it), so they need no extra scope beyond the election lifecycle itself.
+Scopes are deny-by-default and enforced per call. The election lifecycle inside a managed org is split
+across `members:write` (members and groups) and `voting:write` (census, process, bundle, vote relay),
+so an integration that runs a vote end to end needs **both** in addition to the `managed:*` scopes it
+uses to provision the org. An admin **user** logging in with email/password carries these implicitly;
+an **API key** must be granted each one explicitly.
 
 > [!TIP] Least privilege
 > Grant the minimum a workload needs, use a separate key per environment, and rotate keys
@@ -47,7 +52,7 @@ once**, in the creation response.
 ```bash
 curl "${auth[@]}" -X POST "$B/organizations/$INTEGRATOR/apikeys" -d '{
   "label": "CI server",
-  "scopes": ["managed:write", "managed:read", "quota:read"],
+  "scopes": ["managed:write", "managed:read", "quota:read", "members:write", "voting:write"],
   "expiresAt": "2027-01-01T00:00:00Z"
 }'
 ```
@@ -56,7 +61,7 @@ curl "${auth[@]}" -X POST "$B/organizations/$INTEGRATOR/apikeys" -d '{
 { "id": "key_123",
   "prefix": "vsk_ab12",
   "secret": "vsk_ab12….",       // shown once — store it now
-  "scopes": ["managed:write", "managed:read", "quota:read"],
+  "scopes": ["managed:write", "managed:read", "quota:read", "members:write", "voting:write"],
   "revoked": false }
 ```
 
@@ -70,14 +75,14 @@ curl "${auth[@]}" -X POST "$B/organizations/$INTEGRATOR/apikeys" -d '{
 ```csharp
 var key = await Post($"/organizations/{integrator}/apikeys", new {
     label = "CI server",
-    scopes = new[] { "managed:write", "managed:read", "quota:read" },
+    scopes = new[] { "managed:write", "managed:read", "quota:read", "members:write", "voting:write" },
 });
 var secret = key.GetProperty("secret").GetString();   // store immediately
 ```
 ```python
 key = post(f"/organizations/{integrator}/apikeys", {
     "label": "CI server",
-    "scopes": ["managed:write", "managed:read", "quota:read"],
+    "scopes": ["managed:write", "managed:read", "quota:read", "members:write", "voting:write"],
 }).json()
 secret = key["secret"]   # store immediately
 ```
@@ -100,5 +105,5 @@ Listing returns only metadata (id, prefix, scopes, timestamps) — never the sec
 | Status | Meaning | Fix |
 |--------|---------|-----|
 | `401 Unauthorized` | Missing or invalid key. | Check the `Authorization` header and key value. |
-| `403` insufficient scope | The key lacks the endpoint's scope. | Re-mint with the needed scope (`managed:write` / `managed:read` / `quota:read`). |
+| `403` insufficient scope | The key lacks the endpoint's scope. | Re-mint with the needed scope (`managed:write` / `managed:read` / `quota:read` / `members:write` / `voting:write`). |
 | `403` not an integrator | The resolved organization isn't an integrator. | Use a key minted under your integrator organization. |
