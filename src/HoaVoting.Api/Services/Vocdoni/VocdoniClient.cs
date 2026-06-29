@@ -159,6 +159,13 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
     public Task<ProcessResultsResponse> GetResultsAsync(string processId, CancellationToken ct = default) =>
         SendAsync<ProcessResultsResponse>(HttpMethod.Get, $"/process/{processId}/results", null, ct);
 
+    /// <summary>Reads the published census size from the process detail (the results endpoint omits it).</summary>
+    public async Task<int?> GetCensusSizeAsync(string processId, CancellationToken ct = default)
+    {
+        var detail = await SendAsync<ProcessDetailResponse>(HttpMethod.Get, $"/process/{processId}", null, ct);
+        return detail.Census?.Size;
+    }
+
     // --- transport ---------------------------------------------------------
 
     private async Task<T> SendAsync<T>(HttpMethod method, string path, object? body, CancellationToken ct)

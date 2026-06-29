@@ -57,7 +57,9 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
                 MaxCensusSize = memberCount,
                 ElectionType = new ElectionType { Autostart = true, Interruptible = true },
                 VoteType = req.AllowMultiple
-                    ? new VoteType { MaxCount = req.Choices.Count, MaxValue = 1, UniqueChoices = true }
+                    // Approval: one 0/1 field per option, multiple 1s allowed (uniqueChoices MUST be
+                    // false, else repeating a value — e.g. two selected options — is rejected).
+                    ? new VoteType { MaxCount = req.Choices.Count, MaxValue = 1, UniqueChoices = false }
                     : new VoteType { MaxCount = 1, MaxValue = req.Choices.Count - 1 },
                 Questions =
                 [
@@ -89,6 +91,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             VocdoniProcessId = processId,
             VocdoniBundleId = bundleId,
             ChoicesJson = JsonSerializer.Serialize(req.Choices.Select(c => c.Title)),
+            AllowMultiple = req.AllowMultiple,
             StartDate = req.StartDate,
             EndDate = req.EndDate,
             Status = ProposalStatus.Open,
@@ -146,7 +149,11 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         if (p is null) return NotFound();
 
         var r = await vocdoni.GetResultsAsync(p.VocdoniProcessId, ct);
-        return new ProposalResultsResponse(p.VocdoniProcessId, r.Status, r.FinalResults, r.VoteCount, r.Results);
+        // Census size lives on the process detail, not the results payload — fetch it best-effort.
+        int? censusSize = null;
+        try { censusSize = await vocdoni.GetCensusSizeAsync(p.VocdoniProcessId, ct); }
+        catch (VocdoniApiException) { /* leave null; the tally falls back client-side */ }
+        return new ProposalResultsResponse(p.VocdoniProcessId, r.Status, r.FinalResults, r.VoteCount, r.Results, censusSize);
     }
 
     private static Dictionary<string, string> Lang(string text) => new() { ["default"] = text };
@@ -154,6 +161,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
     private static ProposalResponse ToResponse(Proposal p) => new(
         p.Id, p.AssociationId, p.Title, p.Description,
         JsonSerializer.Deserialize<List<string>>(p.ChoicesJson) ?? [],
+        p.AllowMultiple,
         p.Status.ToString(), p.VocdoniProcessId, p.VocdoniCensusId, p.VocdoniBundleId,
         p.StartDate, p.EndDate, p.CreatedAt);
 

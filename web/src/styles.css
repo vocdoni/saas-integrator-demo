@@ -430,11 +430,13 @@ button.link:hover {
 }
 
 button.link.danger {
-  color: var(--danger);
+  /* filled danger pill: white text on the danger fill (not red-on-red). */
+  background: var(--danger);
+  color: #fff;
 }
 
 button.link.danger:hover {
-  background: rgba(164, 57, 44, 0.08);
+  background: #832c22;
 }
 
 button.danger {
@@ -833,6 +835,7 @@ code {
 }
 
 .bar-fill {
+  display: block; /* a bare <span> is inline and ignores width/height → 0x0; block makes the fill render */
   height: 100%;
   background: var(--brand);
   border-radius: 999px;
@@ -951,8 +954,8 @@ code {
 }
 
 .vote-meta {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* row 1: opens | closes, row 2: votes | eligible */
   gap: 8px 22px;
   color: var(--ink-3);
   font-size: 12.5px;
@@ -1018,6 +1021,21 @@ code {
   border: 1px dashed var(--border-strong);
   border-radius: var(--r-sm);
   padding: 11px 14px;
+}
+
+.vote-done {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--paper-inset);
+  border: 1px solid var(--brand);
+  border-radius: var(--r-sm);
+  padding: 14px;
+}
+
+/* Full hex ids (nullifier, process ref) must wrap inside the overflow-hidden card, not clip. */
+.vote-body .mono {
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-reduced-motion: reduce) {

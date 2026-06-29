@@ -38,6 +38,7 @@ public record ProposalResponse(
     string Title,
     string Description,
     List<string> Choices,
+    bool AllowMultiple,
     string Status,
     string VocdoniProcessId,
     string VocdoniCensusId,
@@ -51,12 +52,17 @@ public record ProposalResultsResponse(
     string? Status,
     bool FinalResults,
     int VoteCount,
-    List<List<string>>? Results);
+    List<List<string>>? Results,
+    // Published census size = eligible voters; the tally bars fill against this. Null if unavailable.
+    int? CensusSize);
 
 /// <summary>Public, read-only voting-page payload (no auth).</summary>
 public record VotingInfoResponse(
     string ProcessId,
     string BundleId,
+    // Vocdoni SaaS API base URL — the voting page casts ballots client-side via the integrator SDK,
+    // which talks straight to this API (CSP auth/sign/relay). Never the chain directly.
+    string ApiUrl,
     string Title,
     string Description,
     List<string> Choices,
@@ -65,4 +71,8 @@ public record VotingInfoResponse(
     string Status,
     int? VoteCount,
     string? OnchainStatus,
-    List<List<string>>? Results);
+    List<List<string>>? Results,
+    // Published census size = eligible voters; shown on the page and used to fill the result bars.
+    int? CensusSize,
+    // True = approval voting: the ballot lets the voter pick several choices.
+    bool AllowMultiple);

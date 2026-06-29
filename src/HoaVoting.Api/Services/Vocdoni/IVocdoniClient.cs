@@ -41,4 +41,7 @@ public interface IVocdoniClient
 
     /// <summary>Reads a process tally (by ProcessID).</summary>
     Task<ProcessResultsResponse> GetResultsAsync(string processId, CancellationToken ct = default);
+
+    /// <summary>Reads a process's published census size (the eligible voter count), by ProcessID.</summary>
+    Task<int?> GetCensusSizeAsync(string processId, CancellationToken ct = default);
 }

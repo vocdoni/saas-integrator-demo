@@ -70,7 +70,7 @@ guide will make sense.
 | Surface | Use it for |
 |---|---|
 | **REST API** (this guide) | Everything server-side: provisioning orgs, members, censuses, processes, reading results. |
-| **`@vocdoni/sdk`** (TypeScript) | The **voter's browser**: encoding a ballot and signing the vote transaction (client-side cryptography). The REST API *relays* an already-signed vote; it does not build one. |
+| **`@vocdoni/integrator-sdk`** (TypeScript) | The **voter's browser**: CSP auth, encoding a ballot and signing the vote transaction (client-side cryptography). It talks only to this REST API, which *relays* an already-signed vote; it does not build one. |
 
 This guide covers the REST API end-to-end. The one place you hand off to the SDK — actually casting a
 ballot — is called out explicitly in [Voting process](#voting-process).
@@ -199,7 +199,7 @@ PROCESS=$(curl -s "${auth[@]}" -X POST "$B/process" -d "{
 PJOB=$(curl -s "${auth[@]}" -X POST "$B/process/$PROCESS/publish" | jq -r .jobId)
 until [ "$(curl -s "$B/jobs/$PJOB" | jq -r .status)" = "completed" ]; do sleep 2; done
 
-# ... voters cast ballots client-side via @vocdoni/sdk ...
+# ... voters cast ballots client-side via @vocdoni/integrator-sdk (see "Casting a vote") ...
 
 # 8. Read results (public, no auth needed) — addressed by the ProcessID.
 curl -s "$B/process/$PROCESS/results" | jq
@@ -654,9 +654,12 @@ curl "${auth[@]}" -X POST "$B/process" -d "{
 Field notes:
 - Titles/descriptions are **multilingual maps**: `{ "default": "…", "es": "…" }`.
 - Each choice has a numeric `value`; results are reported per choice (see [Results](#results--jobs)).
-- `voteType.maxCount` = how many selections a voter makes; `voteType.maxValue` = the max value per
-  selection. For a single yes/no question both are `1`. For richer ballots (approval, ranked,
-  quadratic, multi-question), see the Vocdoni **ballot protocol** docs — the numbers have precise
+- `voteType.maxCount` = how many fields the ballot has; `voteType.maxValue` = the max value per
+  field. **Single choice** out of N: `maxCount:1, maxValue:N-1` (the ballot is `[chosenIndex]`).
+  **Approval / multichoice** (pick any subset of N): `maxCount:N, maxValue:1, uniqueChoices:false`
+  (the ballot is `[v0..vN-1]`, a `0/1` per option) — `uniqueChoices` **must** be `false`, or a
+  ballot that selects more than one option is rejected. For richer ballots (ranked, quadratic,
+  budget, multi-question), see the Vocdoni **ballot protocol** docs — the numbers have precise
   meaning there.
 - `electionType.autostart` opens the vote at `startDate`; `interruptible` lets you pause/end it.
 
@@ -693,9 +696,12 @@ curl "${auth[@]}" -X PUT "$B/process/$PROCESS/status" -d '{"status":"ended"}'
 
 #### Casting a vote (the voter's side)
 
-Voting is **voter-facing and cryptographic**, and it's the one place you hand off to the
-`@vocdoni/sdk` in the voter's browser. The server side you provide is a **process bundle** plus the
-CSP (Credential Service Provider) endpoints; the SDK does the ballot encoding and transaction signing.
+Voting is **voter-facing and cryptographic**, and it's the one place you hand off to
+[`@vocdoni/integrator-sdk`](https://github.com/vocdoni/integrator-sdk) in the voter's browser. The
+server side you provide is a **process bundle** plus the CSP (Credential Service Provider) endpoints;
+the SDK does the ballot encoding and transaction signing, talking **only** to this SaaS API — never
+the chain directly. The raw REST steps are below; for a browser app, the SDK wraps all of them (see
+[*From the browser*](#from-the-browser-with-vocdoniintegrator-sdk)).
 
 1. **Bundle the process** (server-side, with your key). A bundle is the voter-facing entry point and
    ties the process(es) to the census. Reference each process by its **ProcessID** — since saas-backend
@@ -713,24 +719,27 @@ CSP (Credential Service Provider) endpoints; the SDK does the ballot encoding an
    a challenge; step `1` submits the one-time code. For an **auth-only** census, step `0` returns a
    pre-verified token and there's no code to enter.
    ```bash
-   # step 0 — identify (member number, and email/phone for 2FA censuses)
+   # step 0 — identify. Pass exactly the fields the census authFields require (here: memberNumber).
    curl -X POST "$B/process/bundle/$BUNDLE/auth/0" -H "Content-Type: application/json" \
-     -d '{"participantId":"A-101","email":"alice@maple.local"}'
-   # step 1 — submit the OTP (2FA censuses only)
+     -d '{"memberNumber":"A-101"}'
+   # step 1 — submit the OTP (2FA censuses only); authData[0] is the one-time code
    curl -X POST "$B/process/bundle/$BUNDLE/auth/1" -H "Content-Type: application/json" \
-     -d '{"authToken":"<token>","code":"123456"}'
+     -d '{"authToken":"<token>","authData":["123456"]}'
    ```
    ```jsonc
-   { "authToken": "deadbeef…", "signature": "…", "weight": "1" }
+   { "authToken": "deadbeef…" }   // auth-only: already verified; 2FA: verified after step 1
    ```
    (`POST /process/bundle/{id}/auth/resend` re-sends a challenge if it expires.)
 
-3. **CSP signs the voter's ballot.** With a verified `authToken`, the CSP blind/ECDSA-signs the
-   voter's address for the chosen election — the `@vocdoni/sdk` orchestrates this and the ballot
-   encoding for you:
+3. **CSP signs the voter's ballot.** With a verified `authToken`, the CSP ECDSA-signs the voter's
+   (ephemeral) address for the chosen election — the SDK generates the ephemeral key and orchestrates
+   the ballot encoding for you. `electionId` is the **on-chain** id (`result.address`):
    ```bash
    curl -X POST "$B/process/bundle/$BUNDLE/sign" -H "Content-Type: application/json" \
-     -d '{"authToken":"deadbeef…","electionId":"0x9f2c…","payload":"<addr>","tokenR":"<R>"}'
+     -d '{"authToken":"deadbeef…","electionId":"0x9f2c…","payload":"<ephemeral addr>"}'
+   ```
+   ```jsonc
+   { "signature": "…", "weight": "1" }   // the CSP signature + the voter's census weight
    ```
    Each token can sign each process **once** (no double-voting).
 
@@ -747,7 +756,62 @@ CSP (Credential Service Provider) endpoints; the SDK does the ballot encoding an
 
 > **What the REST API does and doesn't do:** it *authenticates* the voter and *relays* an
 > already-signed vote. It does **not** build or sign the ballot — that's client-side cryptography in
-> `@vocdoni/sdk`. This repo's web app displays the process and defers casting to the SDK.
+> `@vocdoni/integrator-sdk`. This repo's web app casts votes this way; see `web/src/voting.js`.
+
+#### From the browser with `@vocdoni/integrator-sdk`
+
+The [`@vocdoni/integrator-sdk`](https://github.com/vocdoni/integrator-sdk) wraps every step above. Two
+small published packages cover voting — both talk **only** to this SaaS API:
+
+- `@vocdoni/api-client` — the typed HTTP client (`VocdoniApiClient`).
+- `@vocdoni/api-voting` — the client-side crypto (`EphemeralSigner`, `VotingClient`).
+
+```bash
+npm i @vocdoni/api-client @vocdoni/api-voting
+```
+
+You need three ids from your backend: the SaaS **apiUrl**, the **bundleId**, and the **ProcessID**
+(the 24-hex id; the SDK resolves the on-chain id from it). Then:
+
+```ts
+import { VocdoniApiClient } from '@vocdoni/api-client'
+import { VotingClient, EphemeralSigner } from '@vocdoni/api-voting'
+
+const client = new VocdoniApiClient({ apiUrl })          // e.g. https://saas-api-dev.vocdoni.net
+
+// 1. CSP auth against the bundle. Auth-only census → verified now; 2FA → confirm the OTP.
+const bundle = await client.bundle.get(bundleId)
+let { authToken } = await client.bundle.authStep0(bundleId, { memberNumber })
+if ((bundle.census?.twoFaFields?.length ?? 0) > 0)
+  ({ authToken } = await client.bundle.authStep1(bundleId, { authToken, authData: [otp] }))
+
+// 2. The election gives the on-chain id, chain id, and (for secret ballots) encryption keys.
+const election = await client.elections.get(processId)   // processId = the 24-hex ProcessID
+const onchainId = election.address
+
+// 3. CSP-sign a fresh ephemeral identity, then build + encrypt + relay the vote.
+const { hasVoted } = await client.bundle.check(bundleId, { authToken, electionId: onchainId })
+if (hasVoted) throw new Error('already voted')
+const signer = new EphemeralSigner()
+const { signature, weight } = await client.bundle.sign(
+  bundleId, { authToken, electionId: onchainId, payload: signer.address })
+
+const jobId = await new VotingClient({ client }).vote({
+  processId: onchainId,
+  choices,                     // single choice: [chosenIndex]; approval: [v0..vN-1] (1 per pick)
+  chainId: election.chainId,
+  signer,
+  cspSignature: signature,
+  cspWeight: weight,
+  encryptionKeys: election.encryptionPublicKeys,   // only set for secret-until-the-end elections
+})
+const job = await client.jobs.waitFor(jobId)
+const nullifier = job.result?.voteID               // proof the vote landed
+```
+
+> **`choices` is the on-chain ballot array** (see the *Voting process* note above): a single-choice
+> ballot is `[chosenIndex]`; an approval ballot is one `0/1` per option, e.g. `[1,0,1]` to approve
+> options 0 and 2. `web/src/voting.js` is the runnable reference for this exact flow.
 
 **Gotchas**
 - `POST /process` returns a **bare string** (the ProcessID), not an object.
@@ -810,6 +874,19 @@ aggregation (count per choice) is the common case; richer ballots (ranked, quadr
 **index-weighted** aggregation where the numbers mean something different — the Vocdoni **ballot
 protocol** docs explain how each variant maps a numeric ballot to this matrix.
 
+**Approval / multichoice reads differently.** There the matrix has **one field per option**, each a
+`[#voted-0, #voted-1]` histogram — so an option's vote count is the **second** number, `results[i][1]`,
+not `results[0]`:
+
+```
+results = [ ["0","3"], ["1","2"] ]    # 3 ballots, options Yes / No
+            └Yes        └No
+Yes approved by results[0][1] = 3 ;  No approved by results[1][1] = 2
+```
+
+Reading `results[0]` here (`["0","3"]`) and treating it as "Yes 0, No 3" is the classic bug — each
+voter can approve several options, so iterate the fields, not one field's values.
+
 - `finalResults: false` → the election is still open; the tally is provisional.
 - `finalResults: true`  → the election has ended; results are final.
 
@@ -835,13 +912,18 @@ A one-screen field guide to the sharp edges, all of which this repo hit:
    metadata, and the bundle — before and after publish. The on-chain election id (`result.address`)
    is only used client-side, to sign voter payloads.
 9. **The API relays votes; it doesn't build them.** Ballot encoding and signing are client-side in
-   `@vocdoni/sdk`. Relay is path-less: `POST /vote` (the signed envelope names the process).
-10. **Read the results matrix as `results[question][choice]`**, values are strings.
+   `@vocdoni/integrator-sdk`. Relay is path-less: `POST /vote` (the signed envelope names the process).
+10. **Read the results matrix as `results[question][choice]`**, values are strings — **except
+    approval/multichoice**, where it's one field per option (`[#0,#1]`) and the count is `results[i][1]`.
+11. **Approval voting needs `uniqueChoices:false`** (`maxCount:N, maxValue:1`); leaving it `true`
+    rejects any ballot that selects more than one option.
 
 ## Where to go next
 
-- **`@vocdoni/sdk`** — the TypeScript SDK for the voter side (ballot encoding, anonymous/ZK voting,
-  vote signing). The missing half of the casting flow above.
+- **[`@vocdoni/integrator-sdk`](https://github.com/vocdoni/integrator-sdk)** — the TypeScript SDK for
+  the voter side (`@vocdoni/api-client` + `@vocdoni/api-voting`: CSP auth, ballot encoding, vote
+  signing; ZK/anonymous voting is a separate package). It talks only to this SaaS API and is the other
+  half of the casting flow above — see the browser example and `web/src/voting.js`.
 - **Ballot protocol** — how numeric ballots (approval, ranked, quadratic, budget, multi-question) map
   to the `voteType` fields and the results matrix.
 - **API reference** — the full swagger for every endpoint and field.

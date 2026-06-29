@@ -5,6 +5,7 @@ using HoaVoting.Api.Services.Vocdoni;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace HoaVoting.Api.Controllers;
 
@@ -12,7 +13,7 @@ namespace HoaVoting.Api.Controllers;
 [ApiController]
 [AllowAnonymous]
 [Route("api/processes")]
-public class VotingController(AppDbContext db, IVocdoniClient vocdoni) : ControllerBase
+public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<VocdoniOptions> vocdoniOptions) : ControllerBase
 {
     [HttpGet("{processId}")]
     public async Task<ActionResult<VotingInfoResponse>> Get(string processId, CancellationToken ct)
@@ -36,8 +37,14 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni) : Control
         catch (VocdoniApiException) { /* leave nulls */ }
         catch (HttpRequestException) { /* leave nulls */ }
 
+        // Census size (eligible voters) lives on the process detail — best-effort, like the tally.
+        int? censusSize = null;
+        try { censusSize = await vocdoni.GetCensusSizeAsync(processId, ct); }
+        catch (VocdoniApiException) { /* leave null */ }
+        catch (HttpRequestException) { /* leave null */ }
+
         return new VotingInfoResponse(
-            p.VocdoniProcessId, p.VocdoniBundleId, p.Title, p.Description, choices,
-            p.StartDate, p.EndDate, p.Status.ToString(), voteCount, onchainStatus, results);
+            p.VocdoniProcessId, p.VocdoniBundleId, vocdoniOptions.Value.BaseUrl, p.Title, p.Description, choices,
+            p.StartDate, p.EndDate, p.Status.ToString(), voteCount, onchainStatus, results, censusSize, p.AllowMultiple);
     }
 }

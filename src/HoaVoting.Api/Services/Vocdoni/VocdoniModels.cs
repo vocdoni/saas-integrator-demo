@@ -192,6 +192,18 @@ public sealed class JobStatusResponse
     public string? Error { get; set; }
 }
 
+/// <summary>Subset of GET /process/{id}: the published census carries its <c>size</c>.</summary>
+public sealed class ProcessDetailResponse
+{
+    public ProcessCensusInfo? Census { get; set; }
+}
+
+public sealed class ProcessCensusInfo
+{
+    /// <summary>Published census size — the eligible voter count for this process.</summary>
+    public int Size { get; set; }
+}
+
 public sealed class ProcessResultsResponse
 {
     public string? Status { get; set; }
