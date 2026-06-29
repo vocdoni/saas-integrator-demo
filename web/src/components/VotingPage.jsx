@@ -115,7 +115,7 @@ export default function VotingPage({ processId }) {
       ) : nullifier ? (
         <div className="vote-done">
           <strong>Your vote was cast.</strong>
-          <p className="mono small muted" title={nullifier}>Nullifier {nullifier.slice(0, 18)}…</p>
+          <p className="mono small muted">Nullifier {nullifier}</p>
         </div>
       ) : (
         <form onSubmit={submitVote}>
@@ -162,8 +162,8 @@ export default function VotingPage({ processId }) {
         </form>
       )}
 
-      <p className="mono small muted" style={{ marginTop: 14 }} title={info.processId}>
-        Ref {info.processId.slice(0, 18)}…
+      <p className="mono small muted" style={{ marginTop: 14 }}>
+        Ref {info.processId}
       </p>
     </>,
   )

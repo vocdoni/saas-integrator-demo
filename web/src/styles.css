@@ -430,11 +430,13 @@ button.link:hover {
 }
 
 button.link.danger {
-  color: var(--danger);
+  /* filled danger pill: white text on the danger fill (not red-on-red). */
+  background: var(--danger);
+  color: #fff;
 }
 
 button.link.danger:hover {
-  background: rgba(164, 57, 44, 0.08);
+  background: #832c22;
 }
 
 button.danger {
@@ -1028,6 +1030,11 @@ code {
   border: 1px solid var(--brand);
   border-radius: var(--r-sm);
   padding: 14px;
+}
+
+/* Full hex ids (nullifier, process ref) must wrap inside the overflow-hidden card, not clip. */
+.vote-body .mono {
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-reduced-motion: reduce) {
