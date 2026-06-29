@@ -17,8 +17,7 @@ const blankForm = () => {
     choices: ['Yes', 'No'],
     startDate: start,
     endDate: plusDay(start), // default end = start + 1 day
-    allowMultiple: false,
-    twoFactorAuth: false,
+    votingType: 'single', // single | multiple | ranked
   }
 }
 
@@ -65,8 +64,7 @@ export default function Proposals({ assoc }) {
           choices: choices.map((title) => ({ title })),
           startDate: new Date(form.startDate).toISOString(),
           endDate: new Date(form.endDate).toISOString(),
-          allowMultiple: form.allowMultiple,
-          twoFactorAuth: form.twoFactorAuth,
+          votingType: form.votingType,
         },
       })
       setForm(blankForm())
@@ -151,14 +149,24 @@ export default function Proposals({ assoc }) {
             </label>
           </div>
 
-          <label className="check">
-            <input type="checkbox" checked={form.allowMultiple} onChange={(e) => setForm({ ...form, allowMultiple: e.target.checked })} />
-            Allow multiple selections
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={form.twoFactorAuth} onChange={(e) => setForm({ ...form, twoFactorAuth: e.target.checked })} />
-            Require email 2FA (off = authenticate by member number)
-          </label>
+          <fieldset className="vote-type">
+            <legend className="label">Voting type</legend>
+            {[
+              ['single', 'Single choice', 'voters pick one option'],
+              ['multiple', 'Multiple choice', 'voters approve any number of options'],
+              ['ranked', 'Ranked voting', 'voters drag to sort the options'],
+            ].map(([value, title, hint]) => (
+              <label key={value} className="check">
+                <input
+                  type="radio"
+                  name="votingType"
+                  checked={form.votingType === value}
+                  onChange={() => setForm({ ...form, votingType: value })}
+                />
+                <span>{title} <span className="muted small">— {hint}</span></span>
+              </label>
+            ))}
+          </fieldset>
 
           {error && <div className="error">{error}</div>}
           <button disabled={busy}>{busy ? 'Publishing… (~10–30s)' : 'Create & publish'}</button>
@@ -204,7 +212,7 @@ export default function Proposals({ assoc }) {
                         <> of <span className="num">{results[p.id].censusSize}</span> eligible</>
                       )}
                     </div>
-                    <Tally result={results[p.id]} choices={p.choices} allowMultiple={p.allowMultiple} />
+                    <Tally result={results[p.id]} choices={p.choices} votingType={p.votingType} />
                   </div>
                 )}
               </li>
@@ -238,22 +246,26 @@ function VotingLink({ processId }) {
   )
 }
 
-// Per-choice vote counts from the results histogram. Single-choice: one field whose values are the
-// choices → results[0]. Approval (multichoice): one field per choice, each [#voted-0, #voted-1] →
-// each choice's count is field[1].
-function tallyCounts(results, allowMultiple) {
+// Per-option numbers from the results histogram, by voting type:
+// - single: one field whose values are the choices → results[0] is the per-choice count.
+// - multiple (approval): one field per choice, each [#voted-0, #voted-1] → count is field[1].
+// - ranked: one field per choice, each a histogram over rank values → Borda score Σ count·value.
+export function tallyCounts(results, votingType) {
   if (!results || !results[0]) return null
-  return allowMultiple
-    ? results.map((field) => Number(field?.[1]) || 0)
-    : results[0].map((v) => Number(v) || 0)
+  if (votingType === 'multiple') return results.map((f) => Number(f?.[1]) || 0)
+  if (votingType === 'ranked')
+    return results.map((f) => f.reduce((s, c, v) => s + (Number(c) || 0) * v, 0))
+  return results[0].map((v) => Number(v) || 0)
 }
 
-// Tally bars filled against the census size (eligible voters), so each bar shows turnout share —
-// not share of the leading choice. Falls back to the leading tally if the census size is unknown.
-function Tally({ result, choices, allowMultiple }) {
-  const nums = tallyCounts(result.results, allowMultiple)
+// Tally bars. Single/multiple fill against the census size (turnout share). Ranked shows a Borda
+// score, so it fills against the top score instead. Falls back to the leading value when unknown.
+function Tally({ result, choices, votingType }) {
+  const nums = tallyCounts(result.results, votingType)
   if (!nums) return null
-  const denom = result.censusSize > 0 ? result.censusSize : Math.max(1, ...nums)
+  const denom = votingType === 'ranked' || !(result.censusSize > 0)
+    ? Math.max(1, ...nums)
+    : result.censusSize
   return (
     <div className="tally">
       {nums.map((n, ci) => (

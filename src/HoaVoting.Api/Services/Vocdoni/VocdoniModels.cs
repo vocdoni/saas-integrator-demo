@@ -75,9 +75,6 @@ public sealed class CreateCensusRequest
 
     /// <summary>Member fields used to authenticate voters (e.g. "memberNumber").</summary>
     public List<string>? AuthFields { get; set; }
-
-    /// <summary>Member fields used for 2FA (e.g. "email", "phone").</summary>
-    public List<string>? TwoFaFields { get; set; }
 }
 
 public sealed class CreateCensusResponse
@@ -100,7 +97,6 @@ public sealed class MemberGroupInfo
 public sealed class PublishCensusGroupRequest
 {
     public List<string>? AuthFields { get; set; }
-    public List<string>? TwoFaFields { get; set; }
     public bool Weighted { get; set; }
 }
 

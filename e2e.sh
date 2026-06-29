@@ -44,7 +44,7 @@ OWNER_EMAIL="owner+$(date +%s)@e2e.local"
 OWNER_PW="owner-pw-123"
 ASSOC_NAME="E2E Homeowners Voting Platform $(date +%H%M%S)"
 CSV="${CSV:-memberbase-test.csv}"   # memberbase: First Name,Email,Member Number
-TWOFA="${TWOFA:-false}"             # census 2FA: false = CSP auth-only, true = email OTP
+VTYPE="${VTYPE:-single}"            # voting type: single | multiple | ranked
 
 # --- 1. admin login --------------------------------------------------------
 step "Admin login ($ADMIN_EMAIL)"
@@ -136,11 +136,11 @@ COUNT=$(printf '%s' "$BODY" | jq 'length' 2>/dev/null)
 # Publish is async on Vocdoni; this step waits for the on-chain process id, so it can take ~10-30s.
 START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 END=$(date -u -v+7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+7 days' +%Y-%m-%dT%H:%M:%SZ)
-step "Create proposal (census 2FA=$TWOFA; waits for publish)"
+step "Create proposal (votingType=$VTYPE; waits for publish)"
 req POST "/api/associations/$ASSOC_ID/proposals" \
-  "{\"title\":\"Repaint lobby?\",\"description\":\"E2E proposal\",\"choices\":[{\"title\":\"Yes\"},{\"title\":\"No\"}],\"startDate\":\"$START\",\"endDate\":\"$END\",\"allowMultiple\":false,\"twoFactorAuth\":$TWOFA}" "$OWNER_TOKEN"
+  "{\"title\":\"Repaint lobby?\",\"description\":\"E2E proposal\",\"choices\":[{\"title\":\"Yes\"},{\"title\":\"No\"}],\"startDate\":\"$START\",\"endDate\":\"$END\",\"votingType\":\"$VTYPE\"}" "$OWNER_TOKEN"
 if [ "$HTTP" = 201 ]; then
-  ok "201 (census 2FA=$TWOFA)"
+  ok "201 (votingType=$VTYPE)"
   PROP_ID=$(j "$BODY" .id); PROC=$(j "$BODY" .vocdoniProcessId)
   ok "proposal id=$PROP_ID, process=$PROC"
 else

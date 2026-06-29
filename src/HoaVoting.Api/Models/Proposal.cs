@@ -37,8 +37,8 @@ public class Proposal
     /// <summary>The proposal's choice titles, JSON-serialized, for the public voting page.</summary>
     public string ChoicesJson { get; set; } = "[]";
 
-    /// <summary>True = approval voting (select several choices); false = single choice.</summary>
-    public bool AllowMultiple { get; set; }
+    /// <summary>Ballot kind: single choice, multiple (approval), or ranked.</summary>
+    public VotingType VotingType { get; set; }
 
     public DateTimeOffset StartDate { get; set; }
     public DateTimeOffset EndDate { get; set; }

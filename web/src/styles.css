@@ -1011,6 +1011,69 @@ code {
   accent-color: var(--brand);
 }
 
+/* Ranked ballot: draggable rows with a rank badge + ▲/▼ (touch) fallback. */
+.vote-choice.ranked {
+  cursor: grab;
+  user-select: none;
+}
+.vote-choice.ranked.dragging {
+  opacity: 0.45;
+  border-color: var(--brand);
+}
+.rank-badge {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.rank-label {
+  flex: 1;
+}
+.rank-moves {
+  display: flex;
+  gap: 4px;
+}
+.rank-move {
+  padding: 2px 7px;
+  font-size: 10px;
+  line-height: 1;
+  background: var(--paper-inset);
+  color: var(--ink-2);
+  border: 1px solid var(--border-soft);
+  box-shadow: none;
+}
+.rank-move:hover:not(:disabled) {
+  background: var(--paper);
+  border-color: var(--border-strong);
+}
+.rank-grip {
+  flex: none;
+  color: var(--ink-4);
+  cursor: grab;
+}
+
+/* Create-proposal voting-type selector — reuses the .check label rows. */
+.vote-type {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 8px 10px;
+  margin: 0;
+}
+.vote-type legend {
+  padding: 0 4px;
+}
+
 .vote-soon {
   display: flex;
   align-items: center;

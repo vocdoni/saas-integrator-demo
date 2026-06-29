@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
-import { castVote, bundleNeedsOtp } from '../voting.js'
+import { castVote } from '../voting.js'
 
 const fmt = (s) => {
   try {
@@ -24,12 +24,12 @@ export default function VotingPage({ processId }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // Ballot state. `selected` holds the chosen choice indices (one for single-choice, several for
-  // multichoice/approval).
+  // Ballot state. `selected` = chosen choice indices (single → one, multiple → several).
+  // `order` = choice indices in the voter's ranked order (ranked only); `dragIndex` = row being dragged.
   const [selected, setSelected] = useState([])
+  const [order, setOrder] = useState([])
+  const [dragIndex, setDragIndex] = useState(null)
   const [memberNumber, setMemberNumber] = useState('')
-  const [otp, setOtp] = useState('')
-  const [needsOtp, setNeedsOtp] = useState(false)
   const [casting, setCasting] = useState(false)
   const [voteErr, setVoteErr] = useState('')
   const [nullifier, setNullifier] = useState('')
@@ -48,34 +48,57 @@ export default function VotingPage({ processId }) {
     })()
   }, [processId])
 
-  // While voting is open, ask the bundle whether it needs a 2FA OTP (auth-only census → no field).
+  // Seed the ranked order to the choice order once the ballot loads.
   useEffect(() => {
-    if (!info || isFinished(info)) return
-    bundleNeedsOtp({ apiUrl: info.apiUrl, bundleId: info.bundleId })
-      .then(setNeedsOtp)
-      .catch(() => setNeedsOtp(false))
+    if (info?.votingType === 'ranked') setOrder(info.choices.map((_, i) => i))
   }, [info])
 
-  // Toggle a choice. Single-choice replaces the selection; multichoice adds/removes it.
+  // Single replaces the selection; multiple adds/removes.
   const toggleChoice = (i) =>
-    setSelected((s) => (info.allowMultiple ? (s.includes(i) ? s.filter((x) => x !== i) : [...s, i]) : [i]))
+    setSelected((s) => (info.votingType === 'multiple' ? (s.includes(i) ? s.filter((x) => x !== i) : [...s, i]) : [i]))
+
+  // Reorder the ranked list. `move` is the ▲/▼ (and touch) fallback; drag handlers do the same.
+  const move = (pos, dir) =>
+    setOrder((o) => {
+      const j = pos + dir
+      if (j < 0 || j >= o.length) return o
+      const next = [...o]
+      ;[next[pos], next[j]] = [next[j], next[pos]]
+      return next
+    })
+  const drop = (pos) => {
+    setOrder((o) => {
+      if (dragIndex === null || dragIndex === pos) return o
+      const next = [...o]
+      const [moved] = next.splice(dragIndex, 1)
+      next.splice(pos, 0, moved)
+      return next
+    })
+    setDragIndex(null)
+  }
 
   async function submitVote(e) {
     e.preventDefault()
     setVoteErr('')
     setCasting(true)
     try {
-      // Ballot encoding: single-choice = [chosenIndex]; approval = one 0/1 per choice.
-      const choices = info.allowMultiple
-        ? info.choices.map((_, i) => (selected.includes(i) ? 1 : 0))
-        : [selected[0]]
+      const n = info.choices.length
+      let choices
+      if (info.votingType === 'multiple') {
+        choices = info.choices.map((_, i) => (selected.includes(i) ? 1 : 0))
+      } else if (info.votingType === 'ranked') {
+        // Top of the list = most preferred = highest value (n-1); each option gets a unique rank.
+        choices = new Array(n).fill(0)
+        order.forEach((optIdx, pos) => (choices[optIdx] = n - 1 - pos))
+      } else {
+        choices = [selected[0]]
+      }
       const id = await castVote({
         apiUrl: info.apiUrl,
         bundleId: info.bundleId,
         processId: info.processId,
         choices,
         memberNumber: memberNumber.trim(),
-        otp: otp.trim(),
       })
       setNullifier(id)
       await reload() // refresh the vote count
@@ -123,7 +146,7 @@ export default function VotingPage({ processId }) {
       </div>
 
       {done ? (
-        <Results results={info.results} choices={info.choices} censusSize={info.censusSize} allowMultiple={info.allowMultiple} />
+        <Results results={info.results} choices={info.choices} censusSize={info.censusSize} votingType={info.votingType} />
       ) : nullifier ? (
         <div className="vote-done">
           <strong>Your vote was cast.</strong>
@@ -131,20 +154,45 @@ export default function VotingPage({ processId }) {
         </div>
       ) : (
         <form onSubmit={submitVote}>
-          <fieldset className="vote-choices">
-            <legend className="eyebrow">{info.allowMultiple ? 'Choices (select one or more)' : 'Choices'}</legend>
-            {info.choices.map((c, i) => (
-              <label key={i} className="vote-choice">
-                <input
-                  type={info.allowMultiple ? 'checkbox' : 'radio'}
-                  name="choice"
-                  checked={selected.includes(i)}
-                  onChange={() => toggleChoice(i)}
-                />
-                <span>{c}</span>
-              </label>
-            ))}
-          </fieldset>
+          {info.votingType === 'ranked' ? (
+            <fieldset className="vote-choices">
+              <legend className="eyebrow">Drag to rank — top is most preferred</legend>
+              {order.map((optIdx, pos) => (
+                <div
+                  key={optIdx}
+                  className={`vote-choice ranked${dragIndex === pos ? ' dragging' : ''}`}
+                  draggable
+                  onDragStart={() => setDragIndex(pos)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => drop(pos)}
+                  onDragEnd={() => setDragIndex(null)}
+                >
+                  <span className="rank-badge">{pos + 1}</span>
+                  <span className="rank-label">{info.choices[optIdx]}</span>
+                  <span className="rank-moves">
+                    <button type="button" className="rank-move" disabled={pos === 0} onClick={() => move(pos, -1)} aria-label="Move up">▲</button>
+                    <button type="button" className="rank-move" disabled={pos === order.length - 1} onClick={() => move(pos, 1)} aria-label="Move down">▼</button>
+                  </span>
+                  <span className="rank-grip" aria-hidden>⠿</span>
+                </div>
+              ))}
+            </fieldset>
+          ) : (
+            <fieldset className="vote-choices">
+              <legend className="eyebrow">{info.votingType === 'multiple' ? 'Choices (select one or more)' : 'Choices'}</legend>
+              {info.choices.map((c, i) => (
+                <label key={i} className="vote-choice">
+                  <input
+                    type={info.votingType === 'multiple' ? 'checkbox' : 'radio'}
+                    name="choice"
+                    checked={selected.includes(i)}
+                    onChange={() => toggleChoice(i)}
+                  />
+                  <span>{c}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
 
           <label>
             Member number
@@ -155,20 +203,9 @@ export default function VotingPage({ processId }) {
               required
             />
           </label>
-          {needsOtp && (
-            <label>
-              Email code
-              <input
-                value={otp}
-                onChange={(e) => setOtp(e.target.value)}
-                placeholder="One-time code sent to your email"
-                required
-              />
-            </label>
-          )}
 
           {voteErr && <div className="error">{voteErr}</div>}
-          <button disabled={casting || selected.length === 0 || !memberNumber.trim()}>
+          <button disabled={casting || !memberNumber.trim() || (info.votingType !== 'ranked' && selected.length === 0)}>
             {casting ? 'Casting vote…' : 'Cast vote'}
           </button>
         </form>
@@ -181,23 +218,25 @@ export default function VotingPage({ processId }) {
   )
 }
 
-// Per-choice counts from the results histogram. Single-choice: results[0] is per-choice. Approval
-// (multichoice): one field per choice, each [#voted-0, #voted-1] → the count is field[1].
-function tallyCounts(results, allowMultiple) {
+// Per-option numbers from the results histogram, by voting type:
+// - single: results[0] is the per-choice count.
+// - multiple (approval): one field per choice, each [#voted-0, #voted-1] → count is field[1].
+// - ranked: one field per choice, a histogram over rank values → Borda score Σ count·value.
+function tallyCounts(results, votingType) {
   if (!results || !results[0]) return null
-  return allowMultiple
-    ? results.map((field) => Number(field?.[1]) || 0)
-    : results[0].map((v) => Number(v) || 0)
+  if (votingType === 'multiple') return results.map((f) => Number(f?.[1]) || 0)
+  if (votingType === 'ranked') return results.map((f) => f.reduce((s, c, v) => s + (Number(c) || 0) * v, 0))
+  return results[0].map((v) => Number(v) || 0)
 }
 
-// Final tally, winning choice highlighted. Bars fill against the census size (eligible voters), so
-// each shows turnout share; the winner is the choice with the most votes.
-function Results({ results, choices, censusSize, allowMultiple }) {
-  const nums = tallyCounts(results, allowMultiple)
+// Final tally, winning choice highlighted. Single/multiple bars fill against the census size (turnout
+// share); ranked shows a Borda score and fills against the top score. Winner = most votes/highest score.
+function Results({ results, choices, censusSize, votingType }) {
+  const nums = tallyCounts(results, votingType)
   if (!nums) return <div className="vote-soon">Results are not available yet.</div>
   const max = Math.max(...nums, 0)
   if (max === 0) return <div className="vote-soon">No votes were cast.</div>
-  const denom = censusSize > 0 ? censusSize : max
+  const denom = votingType === 'ranked' || !(censusSize > 0) ? max : censusSize
   return (
     <div className="tally vote-tally">
       {nums.map((n, ci) => {

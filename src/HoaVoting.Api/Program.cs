@@ -9,7 +9,11 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    // Serialize enums (e.g. VotingType) as camelCase strings — "single" / "multiple" / "ranked".
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(
+        new System.Text.Json.Serialization.JsonStringEnumConverter(
+            System.Text.Json.JsonNamingPolicy.CamelCase)));
 builder.Services.AddOpenApi();
 
 builder.Services.AddDbContext<AppDbContext>(o =>
