@@ -70,4 +70,6 @@ public record VotingInfoResponse(
     string Status,
     int? VoteCount,
     string? OnchainStatus,
-    List<List<string>>? Results);
+    List<List<string>>? Results,
+    // Published census size = eligible voters; shown on the page and used to fill the result bars.
+    int? CensusSize);

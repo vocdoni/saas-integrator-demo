@@ -37,8 +37,14 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
         catch (VocdoniApiException) { /* leave nulls */ }
         catch (HttpRequestException) { /* leave nulls */ }
 
+        // Census size (eligible voters) lives on the process detail — best-effort, like the tally.
+        int? censusSize = null;
+        try { censusSize = await vocdoni.GetCensusSizeAsync(processId, ct); }
+        catch (VocdoniApiException) { /* leave null */ }
+        catch (HttpRequestException) { /* leave null */ }
+
         return new VotingInfoResponse(
             p.VocdoniProcessId, p.VocdoniBundleId, vocdoniOptions.Value.BaseUrl, p.Title, p.Description, choices,
-            p.StartDate, p.EndDate, p.Status.ToString(), voteCount, onchainStatus, results);
+            p.StartDate, p.EndDate, p.Status.ToString(), voteCount, onchainStatus, results, censusSize);
     }
 }

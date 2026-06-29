@@ -108,10 +108,13 @@ export default function VotingPage({ processId }) {
         {info.voteCount != null && (
           <span><b className="num">{info.voteCount}</b> votes cast</span>
         )}
+        {info.censusSize != null && (
+          <span><b className="num">{info.censusSize}</b> eligible</span>
+        )}
       </div>
 
       {done ? (
-        <Results results={info.results} choices={info.choices} />
+        <Results results={info.results} choices={info.choices} censusSize={info.censusSize} />
       ) : nullifier ? (
         <div className="vote-done">
           <strong>Your vote was cast.</strong>
@@ -169,13 +172,16 @@ export default function VotingPage({ processId }) {
   )
 }
 
-// Final tally, winning choice highlighted.
-function Results({ results, choices }) {
+// Final tally, winning choice highlighted. Bars fill against the census size (eligible voters), so
+// each shows turnout share; the winner is still the choice with the most votes. Falls back to the
+// leading tally if the census size is unavailable.
+function Results({ results, choices, censusSize }) {
   const row = results?.[0]
   if (!row) return <div className="vote-soon">Results are not available yet.</div>
   const nums = row.map((v) => Number(v) || 0)
   const max = Math.max(...nums, 0)
   if (max === 0) return <div className="vote-soon">No votes were cast.</div>
+  const denom = censusSize > 0 ? censusSize : max
   return (
     <div className="tally vote-tally">
       {row.map((v, ci) => {
@@ -184,7 +190,7 @@ function Results({ results, choices }) {
           <div className={`bar${win ? ' win' : ''}`} key={ci}>
             <span className="bar-label">{choices?.[ci] ?? `Choice ${ci}`}</span>
             <span className="bar-track">
-              <span className="bar-fill" style={{ width: `${(nums[ci] / max) * 100}%` }} />
+              <span className="bar-fill" style={{ width: `${Math.min(100, (nums[ci] / denom) * 100)}%` }} />
             </span>
             <span className="bar-val">{v}</span>
           </div>
