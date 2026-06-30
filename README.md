@@ -2,8 +2,12 @@
 
 ASP.NET Core (.NET 10) backend for managing **homeowners' associations**. A single **admin**
 creates associations, each with its own **owner**, who manages **homeowners** (the census),
-creates **proposals**, and reads voting **results**. Built on the
-[Vocdoni SaaS API](https://raw.githubusercontent.com/vocdoni/saas-backend/refs/heads/main/docs/swagger.yaml).
+creates **proposals**, and reads voting **results**. Built on the Vocdoni SaaS API.
+
+> [!TIP]
+> **Looking for the integrator docs?** 
+>  - They now live on the Vocdoni **[developer portal](https://developer.vocdoni.io)**, start there for concepts, guides, and the end-to-end flow.
+>  - For the exact endpoints and payloads, check the **[SaaS API swagger](https://github.com/vocdoni/saas-backend/blob/main/docs/swagger.yaml)**.
 
 ## Architecture
 
