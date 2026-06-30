@@ -115,6 +115,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         if (error is not null) return error;
 
         var items = await db.Proposals.Where(p => p.AssociationId == associationId).OrderBy(p => p.Id).ToListAsync(ct);
+        await ReconcileStatusesAsync(items, ct);
         return items.Select(ToResponse).ToList();
     }
 
@@ -125,7 +126,9 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         if (error is not null) return error;
 
         var p = await db.Proposals.SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
-        return p is null ? NotFound() : ToResponse(p);
+        if (p is null) return NotFound();
+        await ReconcileStatusesAsync([p], ct);
+        return ToResponse(p);
     }
 
     /// <summary>Close voting on a proposal (ends the Vocdoni process).</summary>
@@ -159,6 +162,30 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         try { censusSize = await vocdoni.GetCensusSizeAsync(p.VocdoniProcessId, ct); }
         catch (VocdoniApiException) { /* leave null; the tally falls back client-side */ }
         return new ProposalResultsResponse(p.VocdoniProcessId, r.Status, r.FinalResults, r.VoteCount, r.Results, censusSize);
+    }
+
+    // A proposal whose Vocdoni process has ended on-chain (RESULTS/ENDED/CANCELED) or whose end date
+    // has passed is closed, even if it was never explicitly closed here — e.g. an owner close that
+    // ended the process on-chain but failed to persist, or natural expiry. Reconcile the stored status
+    // (best-effort, Open proposals only) so every consumer of the API sees the real state.
+    private async Task ReconcileStatusesAsync(IReadOnlyList<Proposal> proposals, CancellationToken ct)
+    {
+        var changed = false;
+        foreach (var p in proposals.Where(x => x.Status == ProposalStatus.Open))
+        {
+            string? onchain = null;
+            try { onchain = (await vocdoni.GetResultsAsync(p.VocdoniProcessId, ct)).Status; }
+            catch (VocdoniApiException) { /* upstream unreachable — leave as-is */ }
+            catch (HttpRequestException) { }
+
+            var oc = (onchain ?? "").ToUpperInvariant();
+            if (oc is "RESULTS" or "ENDED" or "CANCELED" || p.EndDate < DateTimeOffset.UtcNow)
+            {
+                p.Status = ProposalStatus.Closed;
+                changed = true;
+            }
+        }
+        if (changed) await db.SaveChangesAsync(ct);
     }
 
     private static Dictionary<string, string> Lang(string text) => new() { ["default"] = text };
