@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
+import { isFinished } from '../status.js'
 import DangerZone from './DangerZone.jsx'
 
 const pad = (n) => String(n).padStart(2, '0')
@@ -184,7 +185,12 @@ export default function Proposals({ assoc }) {
           <div className="empty">No voting processes yet. Create one on the left.</div>
         ) : (
           <ul className="proposals">
-            {items.map((p) => (
+            {items.map((p) => {
+              // Effective status: reflect a process that ended on-chain or by its end date, not just
+              // an explicit owner-close (matches the public voting page).
+              const finished = isFinished(p)
+              const status = finished ? 'Closed' : p.status
+              return (
               <li key={p.id}>
                 <div className="p-head">
                   <span className="p-title">{p.title}</span>
@@ -192,14 +198,14 @@ export default function Proposals({ assoc }) {
                     <button className="link" onClick={() => toggleResults(p.id)}>
                       {results[p.id] ? 'Hide results' : 'Results'}
                     </button>
-                    {p.status !== 'Closed' && (
+                    {!finished && (
                       <button className="link danger" onClick={() => close(p.id)}>Close</button>
                     )}
                   </div>
                 </div>
                 {p.description && <p className="p-desc small">{p.description}</p>}
                 <div className="p-meta">
-                  <span className={`status s-${(p.status || '').toLowerCase()}`}>{p.status}</span>
+                  <span className={`status s-${status.toLowerCase()}`}>{status}</span>
                   <span className="mono small muted" title={p.vocdoniProcessId}>{short(p.vocdoniProcessId)}</span>
                 </div>
                 {p.vocdoniProcessId && <VotingLink processId={p.vocdoniProcessId} />}
@@ -216,7 +222,8 @@ export default function Proposals({ assoc }) {
                   </div>
                 )}
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
       </section>
