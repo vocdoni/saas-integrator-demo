@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { castVote } from '../voting.js'
+import { isFinished } from '../status.js'
 
 const fmt = (s) => {
   try {
@@ -8,15 +9,6 @@ const fmt = (s) => {
   } catch {
     return s
   }
-}
-
-// Has voting ended? on-chain RESULTS/ENDED, owner-closed, or past the end date.
-function isFinished(info) {
-  const oc = (info.onchainStatus || '').toUpperCase()
-  if (oc === 'RESULTS' || oc === 'ENDED' || oc === 'CANCELED') return true
-  if (info.status === 'Closed') return true
-  if (info.endDate && new Date(info.endDate).getTime() < Date.now()) return true
-  return false
 }
 
 export default function VotingPage({ processId }) {
