@@ -8,8 +8,9 @@ public enum ProposalStatus
 }
 
 /// <summary>
-/// A proposal put to vote. Backed by a Vocdoni census + process (election). Vote casting is
-/// done client-side via the Vocdoni JS SDK; this backend only creates the process and reads results.
+/// A proposal put to vote — a Vocdoni **voting process** (container). Each of its questions is its own
+/// on-chain election (saas-backend #571). The backend authors + publishes the process; vote casting is
+/// client-side per question via the integrator SDK.
 /// </summary>
 public class Proposal
 {
@@ -21,28 +22,40 @@ public class Proposal
     public string Title { get; set; } = "";
     public string Description { get; set; } = "";
 
-    /// <summary>Vocdoni census id this proposal was published against.</summary>
-    public string VocdoniCensusId { get; set; } = "";
-
-    /// <summary>
-    /// Vocdoni 24-hex ProcessID — the single handle the integrator uses: results, status, and the
-    /// bundle (saas-backend #551, #554). The on-chain election id only surfaces client-side in the
-    /// voter signing flow, so the demo never handles it.
-    /// </summary>
+    /// <summary>Vocdoni 24-hex ProcessID of the container (the handle for read/publish/status).</summary>
     public string VocdoniProcessId { get; set; } = "";
 
-    /// <summary>Vocdoni process-bundle id the process was wrapped in (for the CSP voting flow).</summary>
-    public string VocdoniBundleId { get; set; } = "";
-
-    /// <summary>The proposal's choice titles, JSON-serialized, for the public voting page.</summary>
-    public string ChoicesJson { get; set; } = "[]";
-
-    /// <summary>Ballot kind: single choice, multiple (approval), or ranked.</summary>
-    public VotingType VotingType { get; set; }
+    public List<ProposalQuestion> Questions { get; set; } = new();
 
     public DateTimeOffset StartDate { get; set; }
     public DateTimeOffset EndDate { get; set; }
 
     public ProposalStatus Status { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>One question of a proposal — maps 1:1 to an on-chain election under the process container.</summary>
+public class ProposalQuestion
+{
+    public int Id { get; set; }
+
+    public int ProposalId { get; set; }
+    public Proposal? Proposal { get; set; }
+
+    /// <summary>Order within the process (0-based).</summary>
+    public int Order { get; set; }
+
+    public string Title { get; set; } = "";
+
+    /// <summary>The question's choice titles, JSON-serialized.</summary>
+    public string ChoicesJson { get; set; } = "[]";
+
+    /// <summary>Ballot kind for this question: single choice, multiple (approval), or ranked.</summary>
+    public VotingType Kind { get; set; }
+
+    /// <summary>On-chain election id (hex), assigned when the process is published. Empty before publish.</summary>
+    public string UpstreamId { get; set; } = "";
+
+    /// <summary>On-chain status: ready | paused | ended | canceled | results. Empty before publish.</summary>
+    public string Status { get; set; } = "";
 }

@@ -19,12 +19,13 @@ public class VocdoniClientTests
     public async Task Sends_configured_api_token_as_bearer()
     {
         var handler = new CapturingHandler(HttpStatusCode.OK,
-            """{"status":"ended","finalResults":true,"voteCount":3,"results":[["2","1"]]}""");
+            """{"id":"p1","published":true,"questions":[{"id":"q1","upstreamId":"deadbeef","status":"ready"}]}""");
         var client = new VocdoniClient(ClientWithToken(handler, "tok-123"));
 
-        var results = await client.GetResultsAsync("abc123");
+        var proc = await client.GetVotingProcessAsync("p1");
 
-        Assert.Equal(3, results.VoteCount);
+        Assert.Equal("deadbeef", proc.Questions[0].UpstreamId);
+        Assert.Equal("/processes/p1", handler.LastPath);
         Assert.Equal("Bearer tok-123", handler.LastAuthorization);
         Assert.Equal(1, handler.Calls); // no login round-trip, no retry
     }
@@ -35,10 +36,23 @@ public class VocdoniClientTests
         var handler = new CapturingHandler(HttpStatusCode.Unauthorized, """{"error":"bad token"}""");
         var client = new VocdoniClient(ClientWithToken(handler, "tok-123"));
 
-        var ex = await Assert.ThrowsAsync<VocdoniApiException>(() => client.GetResultsAsync("abc123"));
+        var ex = await Assert.ThrowsAsync<VocdoniApiException>(() => client.GetVotingProcessAsync("p1"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, ex.Status);
         Assert.Equal(1, handler.Calls); // surfaced immediately, not retried
+    }
+
+    [Fact]
+    public async Task CreateVotingProcess_posts_to_processes_and_returns_id()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"processId":"6a42"}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var id = await client.CreateVotingProcessAsync(new CreateVotingProcessRequest { OrgAddress = "0xabc" });
+
+        Assert.Equal("6a42", id);
+        Assert.Equal(HttpMethod.Post, handler.LastMethod);
+        Assert.Equal("/processes", handler.LastPath);
     }
 
     [Fact]
@@ -87,40 +101,55 @@ public class VocdoniClientTests
     }
 
     [Fact]
-    public async Task PublishProcess_polls_job_until_complete()
+    public async Task PublishVotingProcess_polls_job_until_complete()
     {
-        // 202 enqueue → poll the job until it completes. Publish returns nothing (single-ProcessID model).
+        // 202 enqueue at /processes/{id}/publish → poll the batch-publish job until it completes.
         var handler = new SequenceHandler(
             (HttpStatusCode.Accepted, """{"jobId":"job1"}"""),
             (HttpStatusCode.OK, """{"status":"completed"}"""));
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
-        await client.PublishProcessAsync("proc1");
+        await client.PublishVotingProcessAsync("proc1");
 
+        Assert.Equal("/processes/proc1/publish", handler.Paths[0]);
         Assert.Equal("/jobs/job1", handler.Paths[^1]);
     }
 
     [Fact]
-    public async Task PublishProcess_returns_immediately_when_already_published()
+    public async Task PublishVotingProcess_returns_immediately_when_already_published()
     {
         // 200 idempotent path: no job poll needed.
-        var handler = new SequenceHandler((HttpStatusCode.OK, """{"address":"cafe","status":"READY"}"""));
+        var handler = new SequenceHandler((HttpStatusCode.OK, """{"processId":"proc1"}"""));
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
-        await client.PublishProcessAsync("proc1");
+        await client.PublishVotingProcessAsync("proc1");
         Assert.Equal(1, handler.Calls);
     }
 
     [Fact]
-    public async Task PublishProcess_throws_when_job_fails()
+    public async Task PublishVotingProcess_throws_when_job_fails()
     {
         var handler = new SequenceHandler(
             (HttpStatusCode.Accepted, """{"jobId":"job1"}"""),
             (HttpStatusCode.OK, """{"status":"failed","error":"out of quota"}"""));
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
-        var ex = await Assert.ThrowsAsync<VocdoniApiException>(() => client.PublishProcessAsync("proc1"));
+        var ex = await Assert.ThrowsAsync<VocdoniApiException>(() => client.PublishVotingProcessAsync("proc1"));
         Assert.Contains("out of quota", ex.Message);
+    }
+
+    [Fact]
+    public async Task SetQuestionsStatus_puts_and_polls_job()
+    {
+        var handler = new SequenceHandler(
+            (HttpStatusCode.Accepted, """{"jobId":"j1"}"""),
+            (HttpStatusCode.OK, """{"status":"completed"}"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        await client.SetQuestionsStatusAsync("proc1", "ended");
+
+        Assert.Equal("/processes/proc1/questions/status", handler.Paths[0]);
+        Assert.Equal("/jobs/j1", handler.Paths[^1]);
     }
 
     // Returns each queued response in order (last one repeats), recording every request path.

@@ -132,28 +132,30 @@ req GET "/api/associations/$ASSOC_ID/homeowners" "" "$OWNER_TOKEN"
 COUNT=$(printf '%s' "$BODY" | jq 'length' 2>/dev/null)
 [ "$HTTP" = 200 ] && ok "200, count=$COUNT" || bad "list HTTP $HTTP — $BODY"
 
-# --- 8. owner creates proposal (Vocdoni: census→publish→process→publish) ---
-# Publish is async on Vocdoni; this step waits for the on-chain process id, so it can take ~10-30s.
+# --- 8. owner creates a multi-question proposal (Vocdoni #571: authored + batch-published) ------
+# Publish is an async on-chain batch (one election per question); this step waits for it (~10-30s).
 START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 END=$(date -u -v+7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+7 days' +%Y-%m-%dT%H:%M:%SZ)
-step "Create proposal (votingType=$VTYPE; waits for publish)"
+step "Create proposal (2 questions: single + multiple; waits for batch publish)"
 req POST "/api/associations/$ASSOC_ID/proposals" \
-  "{\"title\":\"Repaint lobby?\",\"description\":\"E2E proposal\",\"choices\":[{\"title\":\"Yes\"},{\"title\":\"No\"}],\"startDate\":\"$START\",\"endDate\":\"$END\",\"votingType\":\"$VTYPE\"}" "$OWNER_TOKEN"
+  "{\"title\":\"Building decisions\",\"description\":\"E2E proposal\",\"startDate\":\"$START\",\"endDate\":\"$END\",\"questions\":[{\"title\":\"Repaint the lobby?\",\"kind\":\"single\",\"choices\":[{\"title\":\"Yes\"},{\"title\":\"No\"}]},{\"title\":\"Which upgrades?\",\"kind\":\"multiple\",\"choices\":[{\"title\":\"Elevator\"},{\"title\":\"Garden\"},{\"title\":\"Gym\"}]}]}" "$OWNER_TOKEN"
 if [ "$HTTP" = 201 ]; then
-  ok "201 (votingType=$VTYPE)"
   PROP_ID=$(j "$BODY" .id); PROC=$(j "$BODY" .vocdoniProcessId)
-  ok "proposal id=$PROP_ID, process=$PROC"
+  QN=$(printf '%s' "$BODY" | jq '.questions | length'); UP=$(printf '%s' "$BODY" | jq -r '.questions[0].upstreamId')
+  ok "201 — proposal id=$PROP_ID, process=$PROC, $QN questions, q1 upstreamId=${UP:0:12}…"
+  [ -n "$UP" ] && [ "$UP" != "null" ] && ok "questions published (have on-chain ids)" || bad "questions missing upstreamId — batch publish incomplete"
 else
   bad "create proposal HTTP $HTTP — $BODY"; PROP_ID=""
 fi
 
-# --- 9. results + close (only if proposal created) -------------------------
+# --- 9. read + close (only if proposal created) ----------------------------
+# Voting is client-side (per-question CSP sign + relay); the SaaS exposes no results endpoint in #571.
 if [ -n "${PROP_ID:-}" ]; then
-  step "Read results"
-  req GET "/api/associations/$ASSOC_ID/proposals/$PROP_ID/results" "" "$OWNER_TOKEN"
-  [ "$HTTP" = 200 ] && ok "200 (voteCount=$(j "$BODY" .voteCount))" || bad "results HTTP $HTTP — $BODY"
+  step "Read proposal (questions + on-chain status)"
+  req GET "/api/associations/$ASSOC_ID/proposals/$PROP_ID" "" "$OWNER_TOKEN"
+  [ "$HTTP" = 200 ] && ok "200 (q1 status=$(j "$BODY" '.questions[0].status'))" || bad "get HTTP $HTTP — $BODY"
 
-  step "Close proposal"
+  step "Close proposal (ends every question)"
   req POST "/api/associations/$ASSOC_ID/proposals/$PROP_ID/close" "" "$OWNER_TOKEN"
   [ "$HTTP" = 204 ] && ok "204" || bad "close HTTP $HTTP — $BODY"
 fi

@@ -9,6 +9,14 @@ creates **proposals**, and reads voting **results**. Built on the Vocdoni SaaS A
 >  - They now live on the Vocdoni **[developer portal](https://developer.vocdoni.io)**, start there for concepts, guides, and the end-to-end flow.
 >  - For the exact endpoints and payloads, check the **[SaaS API swagger](https://github.com/vocdoni/saas-backend/blob/main/docs/swagger.yaml)**.
 
+> [!WARNING]
+> **This branch integrates the multi-question `/processes` API from [saas-backend #571](https://github.com/vocdoni/saas-backend/pull/571) (unmerged).**
+> A **proposal is now a voting process with N questions**, each its own on-chain election; the legacy
+> singular `/process` + `/process/bundle` flow was removed. #571 is **deployed nowhere yet** — run a
+> local saas-backend on the `feat/processes-api` branch and set `VOCDONI_BASE_URL` + `VOCDONI_CHAIN_ID`
+> to point at it. Voting is per-question (CSP sign + relay client-side); the SaaS exposes **no
+> per-question results endpoint** in #571, so the owner list and voting page show status only.
+
 ## Architecture
 
 The backend is a **Vocdoni integrator** — it creates and manages homeowners' associations as

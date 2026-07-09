@@ -70,67 +70,45 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         SendAsync(HttpMethod.Delete, $"/organizations/{orgAddress}/members",
             new DeleteMembersRequest { Ids = memberIds }, ct);
 
-    public async Task<string> CreateAllMembersGroupAsync(string orgAddress, string title, CancellationToken ct = default)
+    // --- multi-question /processes API (saas-backend #571) -----------------
+
+    /// <summary>Creates a draft voting process (container with N questions); returns its 24-hex ProcessID.</summary>
+    public async Task<string> CreateVotingProcessAsync(CreateVotingProcessRequest request, CancellationToken ct = default)
     {
-        var body = new CreateMemberGroupRequest { Title = title, IncludeAllMembers = true };
-        var group = await SendAsync<MemberGroupInfo>(HttpMethod.Post, $"/organizations/{orgAddress}/groups", body, ct);
-        return group.Id;
+        var resp = await SendAsync<CreateVotingProcessResponse>(HttpMethod.Post, "/processes", request, ct);
+        if (string.IsNullOrEmpty(resp.ProcessId))
+            throw new VocdoniApiException(HttpStatusCode.BadGateway, "POST /processes returned no processId");
+        return resp.ProcessId!;
     }
-
-    public async Task<string> CreateCensusAsync(string orgAddress, List<string> authFields, CancellationToken ct = default)
-    {
-        var body = new CreateCensusRequest { OrgAddress = orgAddress, AuthFields = authFields };
-        var resp = await SendAsync<CreateCensusResponse>(HttpMethod.Post, "/census", body, ct);
-        return resp.Id;
-    }
-
-    public Task<PublishedCensusResponse> PublishCensusGroupAsync(
-        string censusId, string groupId, List<string> authFields, CancellationToken ct = default) =>
-        SendAsync<PublishedCensusResponse>(HttpMethod.Post, $"/census/{censusId}/group/{groupId}/publish",
-            new PublishCensusGroupRequest { AuthFields = authFields, Weighted = false }, ct);
-
-    public async Task<string> CreateProcessAsync(CreateProcessRequest request, CancellationToken ct = default) =>
-        // POST /process returns the 24-hex ProcessID as a bare JSON string. This is the handle for
-        // status/results/metadata (saas-backend #551), so the caller persists it.
-        await SendAsync<string>(HttpMethod.Post, "/process", request, ct);
 
     /// <summary>
-    /// Publishes a process on-chain and waits until it is live. The integrator addresses the process by
-    /// its 24-hex ProcessID everywhere — status/results/metadata (#551) and the bundle (#554) — so the
-    /// on-chain election id assigned by publish is never needed here.
+    /// Publishes every question of a process on-chain as one atomic batch and waits for the job. Each
+    /// question becomes its own election; read the process back to get the per-question upstream ids.
     /// </summary>
-    public async Task PublishProcessAsync(string processId, CancellationToken ct = default)
+    public async Task PublishVotingProcessAsync(string processId, CancellationToken ct = default)
     {
-        using var resp = await SendCoreAsync(HttpMethod.Post, $"/process/{processId}/publish", null, ct);
+        using var resp = await SendCoreAsync(HttpMethod.Post, $"/processes/{processId}/publish", null, ct);
+        if (resp.StatusCode == HttpStatusCode.OK) return; // 200 = already published (idempotent)
 
-        // 200 = already published (idempotent): nothing to wait for.
-        if (resp.StatusCode == HttpStatusCode.OK)
-            return;
-
-        // 202 = accepted: poll the job until it completes (fails fast on a failed job).
         var enqueued = await ReadJsonAsync<EnqueuedResponse>(resp, ct);
         if (string.IsNullOrEmpty(enqueued.JobId))
             throw new VocdoniApiException(resp.StatusCode, "publish returned neither a result nor a jobId");
         await PollJobAsync(enqueued.JobId!, ct);
     }
 
-    public async Task<string> CreateBundleAsync(string censusId, List<string> processIds, CancellationToken ct = default)
-    {
-        var body = new CreateProcessBundleRequest { CensusId = censusId, Processes = processIds };
-        var resp = await SendAsync<CreateProcessBundleResponse>(HttpMethod.Post, "/process/bundle", body, ct);
-        // The response gives the bundle URI ".../process/bundle/{bundleId}"; the id is the last segment.
-        var id = resp.Uri?.TrimEnd('/').Split('/').LastOrDefault();
-        if (string.IsNullOrEmpty(id))
-            throw new InvalidOperationException("Vocdoni did not return a bundle URI.");
-        return id;
-    }
+    /// <summary>Reads a process fully hydrated — after publish each question carries its on-chain upstreamId + status.</summary>
+    public Task<VotingProcessResponse> GetVotingProcessAsync(string processId, CancellationToken ct = default) =>
+        SendAsync<VotingProcessResponse>(HttpMethod.Get, $"/processes/{processId}", null, ct);
 
-    /// <summary>Changes an election's status (e.g. "ended"). <paramref name="processId"/> is the 24-hex ProcessID (#551).</summary>
-    public async Task SetProcessStatusAsync(string processId, string status, CancellationToken ct = default)
+    /// <summary>Changes question status (e.g. "ended"); a null/empty <paramref name="questionIds"/> targets all published questions.</summary>
+    public async Task SetQuestionsStatusAsync(string processId, string status, List<string>? questionIds = null, CancellationToken ct = default)
     {
-        // Status change is async too (202 + jobId); wait for the job so the change is confirmed on-chain.
-        using var resp = await SendCoreAsync(
-            HttpMethod.Put, $"/process/{processId}/status", new SetProcessStatusRequest { Status = status }, ct);
+        var body = new SetQuestionsStatusRequest
+        {
+            Status = status,
+            Questions = questionIds?.Select(id => new QuestionStatusId { Id = id }).ToList(),
+        };
+        using var resp = await SendCoreAsync(HttpMethod.Put, $"/processes/{processId}/questions/status", body, ct);
         if (resp.StatusCode == HttpStatusCode.Accepted)
         {
             var enqueued = await ReadJsonAsync<EnqueuedResponse>(resp, ct);
@@ -153,17 +131,6 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
         throw new VocdoniApiException(HttpStatusCode.GatewayTimeout, $"job {jobId} did not complete within the timeout");
-    }
-
-    /// <summary>Reads an election's tally. <paramref name="processId"/> is the 24-hex ProcessID (#551), not the on-chain id.</summary>
-    public Task<ProcessResultsResponse> GetResultsAsync(string processId, CancellationToken ct = default) =>
-        SendAsync<ProcessResultsResponse>(HttpMethod.Get, $"/process/{processId}/results", null, ct);
-
-    /// <summary>Reads the published census size from the process detail (the results endpoint omits it).</summary>
-    public async Task<int?> GetCensusSizeAsync(string processId, CancellationToken ct = default)
-    {
-        var detail = await SendAsync<ProcessDetailResponse>(HttpMethod.Get, $"/process/{processId}", null, ct);
-        return detail.Census?.Size;
     }
 
     // --- transport ---------------------------------------------------------

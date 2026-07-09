@@ -1078,6 +1078,54 @@ code {
   padding: 0 4px;
 }
 
+/* Multi-question create form + list */
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.question-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px;
+  background: var(--paper-inset);
+}
+.qe-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.p-questions {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.p-question {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pq-title {
+  flex: 1;
+  color: var(--ink-2);
+}
+.pq-kind {
+  font-size: 11px;
+  text-transform: capitalize;
+  color: var(--ink-3);
+  background: var(--paper);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
 .vote-soon {
   display: flex;
   align-items: center;

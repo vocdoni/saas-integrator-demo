@@ -10,17 +10,17 @@ const short = (s) => (s ? `${s.slice(0, 10)}…${s.slice(-6)}` : '')
 const ONE_DAY = 864e5
 const plusDay = (localStr) => toLocalInput(new Date(new Date(localStr).getTime() + ONE_DAY))
 
+const blankQuestion = () => ({ title: '', choices: ['Yes', 'No'], kind: 'single' })
 const blankForm = () => {
   const start = toLocalInput(new Date())
-  return {
-    title: '',
-    description: '',
-    choices: ['Yes', 'No'],
-    startDate: start,
-    endDate: plusDay(start), // default end = start + 1 day
-    votingType: 'single', // single | multiple | ranked
-  }
+  return { title: '', description: '', startDate: start, endDate: plusDay(start), questions: [blankQuestion()] }
 }
+
+const KINDS = [
+  ['single', 'Single choice'],
+  ['multiple', 'Multiple choice'],
+  ['ranked', 'Ranked voting'],
+]
 
 export default function Proposals({ assoc }) {
   const [items, setItems] = useState([])
@@ -28,7 +28,6 @@ export default function Proposals({ assoc }) {
   const [form, setForm] = useState(blankForm())
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [results, setResults] = useState({})
 
   const base = `/associations/${assoc.id}/proposals`
 
@@ -46,26 +45,35 @@ export default function Proposals({ assoc }) {
     load()
   }, [assoc.id])
 
-  const setChoice = (i, v) => setForm((f) => ({ ...f, choices: f.choices.map((c, j) => (j === i ? v : c)) }))
-  const addChoice = () => setForm((f) => ({ ...f, choices: [...f.choices, ''] }))
-  const removeChoice = (i) => setForm((f) => ({ ...f, choices: f.choices.filter((_, j) => j !== i) }))
+  // Question + choice editing (functional updates — no stale closures).
+  const updateQ = (qi, fn) => setForm((f) => ({ ...f, questions: f.questions.map((q, i) => (i === qi ? fn(q) : q)) }))
+  const setQuestion = (qi, patch) => updateQ(qi, (q) => ({ ...q, ...patch }))
+  const addQuestion = () => setForm((f) => ({ ...f, questions: [...f.questions, blankQuestion()] }))
+  const removeQuestion = (qi) => setForm((f) => ({ ...f, questions: f.questions.filter((_, i) => i !== qi) }))
+  const setChoice = (qi, ci, v) => updateQ(qi, (q) => ({ ...q, choices: q.choices.map((c, j) => (j === ci ? v : c)) }))
+  const addChoice = (qi) => updateQ(qi, (q) => ({ ...q, choices: [...q.choices, ''] }))
+  const removeChoice = (qi, ci) => updateQ(qi, (q) => ({ ...q, choices: q.choices.filter((_, j) => j !== ci) }))
 
   async function create(e) {
     e.preventDefault()
     setError('')
     setBusy(true)
     try {
-      const choices = form.choices.map((c) => c.trim()).filter(Boolean)
-      if (choices.length < 2) throw new Error('Add at least two choices.')
+      const questions = form.questions.map((q) => ({
+        title: q.title.trim(),
+        kind: q.kind,
+        choices: q.choices.map((c) => c.trim()).filter(Boolean),
+      }))
+      if (questions.some((q) => !q.title)) throw new Error('Every question needs a title.')
+      if (questions.some((q) => q.choices.length < 2)) throw new Error('Every question needs at least two choices.')
       await api(base, {
         method: 'POST',
         body: {
           title: form.title,
           description: form.description,
-          choices: choices.map((title) => ({ title })),
           startDate: new Date(form.startDate).toISOString(),
           endDate: new Date(form.endDate).toISOString(),
-          votingType: form.votingType,
+          questions: questions.map((q) => ({ title: q.title, kind: q.kind, choices: q.choices.map((title) => ({ title })) })),
         },
       })
       setForm(blankForm())
@@ -78,30 +86,11 @@ export default function Proposals({ assoc }) {
   }
 
   async function close(pid) {
-    if (!confirm('Close voting on this process?')) return
+    if (!confirm('Close voting on this process (ends every question)?')) return
     setError('')
     try {
       await api(`${base}/${pid}/close`, { method: 'POST' })
       await load()
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
-  async function toggleResults(pid) {
-    // Already shown → hide.
-    if (results[pid]) {
-      setResults((prev) => {
-        const next = { ...prev }
-        delete next[pid]
-        return next
-      })
-      return
-    }
-    setError('')
-    try {
-      const r = await api(`${base}/${pid}/results`)
-      setResults((prev) => ({ ...prev, [pid]: r }))
     } catch (e) {
       setError(e.message)
     }
@@ -121,19 +110,6 @@ export default function Proposals({ assoc }) {
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </label>
 
-          <div className="choices">
-            <span className="label">Choices</span>
-            {form.choices.map((c, i) => (
-              <div key={i} className="choice-row">
-                <input value={c} onChange={(e) => setChoice(i, e.target.value)} placeholder={`Choice ${i + 1}`} />
-                {form.choices.length > 2 && (
-                  <button type="button" className="link danger" onClick={() => removeChoice(i)}>×</button>
-                )}
-              </div>
-            ))}
-            <button type="button" className="link" onClick={addChoice}>+ Add choice</button>
-          </div>
-
           <div className="row2">
             <label>
               Start
@@ -150,24 +126,42 @@ export default function Proposals({ assoc }) {
             </label>
           </div>
 
-          <fieldset className="vote-type">
-            <legend className="label">Voting type</legend>
-            {[
-              ['single', 'Single choice', 'voters pick one option'],
-              ['multiple', 'Multiple choice', 'voters approve any number of options'],
-              ['ranked', 'Ranked voting', 'voters drag to sort the options'],
-            ].map(([value, title, hint]) => (
-              <label key={value} className="check">
-                <input
-                  type="radio"
-                  name="votingType"
-                  checked={form.votingType === value}
-                  onChange={() => setForm({ ...form, votingType: value })}
-                />
-                <span>{title} <span className="muted small">— {hint}</span></span>
-              </label>
+          <div className="questions">
+            <span className="label">Questions</span>
+            {form.questions.map((q, qi) => (
+              <div key={qi} className="question-editor">
+                <div className="qe-head">
+                  <span className="label small">Question {qi + 1}</span>
+                  {form.questions.length > 1 && (
+                    <button type="button" className="link danger" onClick={() => removeQuestion(qi)}>Remove</button>
+                  )}
+                </div>
+                <label>
+                  <input value={q.title} onChange={(e) => setQuestion(qi, { title: e.target.value })} placeholder="Question" required />
+                </label>
+                <div className="choices">
+                  {q.choices.map((c, ci) => (
+                    <div key={ci} className="choice-row">
+                      <input value={c} onChange={(e) => setChoice(qi, ci, e.target.value)} placeholder={`Choice ${ci + 1}`} />
+                      {q.choices.length > 2 && (
+                        <button type="button" className="link danger" onClick={() => removeChoice(qi, ci)}>×</button>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" className="link" onClick={() => addChoice(qi)}>+ Add choice</button>
+                </div>
+                <fieldset className="vote-type">
+                  {KINDS.map(([value, title]) => (
+                    <label key={value} className="check">
+                      <input type="radio" name={`kind-${qi}`} checked={q.kind === value} onChange={() => setQuestion(qi, { kind: value })} />
+                      <span>{title}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              </div>
             ))}
-          </fieldset>
+            <button type="button" className="link" onClick={addQuestion}>+ Add question</button>
+          </div>
 
           {error && <div className="error">{error}</div>}
           <button disabled={busy}>{busy ? 'Publishing… (~10–30s)' : 'Create & publish'}</button>
@@ -186,42 +180,32 @@ export default function Proposals({ assoc }) {
         ) : (
           <ul className="proposals">
             {items.map((p) => {
-              // Effective status: reflect a process that ended on-chain or by its end date, not just
-              // an explicit owner-close (matches the public voting page).
               const finished = isFinished(p)
               const status = finished ? 'Closed' : p.status
               return (
-              <li key={p.id}>
-                <div className="p-head">
-                  <span className="p-title">{p.title}</span>
-                  <div className="p-actions">
-                    <button className="link" onClick={() => toggleResults(p.id)}>
-                      {results[p.id] ? 'Hide results' : 'Results'}
-                    </button>
-                    {!finished && (
-                      <button className="link danger" onClick={() => close(p.id)}>Close</button>
-                    )}
-                  </div>
-                </div>
-                {p.description && <p className="p-desc small">{p.description}</p>}
-                <div className="p-meta">
-                  <span className={`status s-${status.toLowerCase()}`}>{status}</span>
-                  <span className="mono small muted" title={p.vocdoniProcessId}>{short(p.vocdoniProcessId)}</span>
-                </div>
-                {p.vocdoniProcessId && <VotingLink processId={p.vocdoniProcessId} />}
-                {results[p.id] && (
-                  <div className="results">
-                    <div className="results-meta">
-                      On-chain status <strong>{results[p.id].status}</strong> ·{' '}
-                      <span className="num">{results[p.id].voteCount}</span> vote{results[p.id].voteCount === 1 ? '' : 's'}
-                      {results[p.id].censusSize > 0 && (
-                        <> of <span className="num">{results[p.id].censusSize}</span> eligible</>
-                      )}
+                <li key={p.id}>
+                  <div className="p-head">
+                    <span className="p-title">{p.title}</span>
+                    <div className="p-actions">
+                      {!finished && <button className="link danger" onClick={() => close(p.id)}>Close</button>}
                     </div>
-                    <Tally result={results[p.id]} choices={p.choices} votingType={p.votingType} />
                   </div>
-                )}
-              </li>
+                  {p.description && <p className="p-desc small">{p.description}</p>}
+                  <div className="p-meta">
+                    <span className={`status s-${status.toLowerCase()}`}>{status}</span>
+                    <span className="mono small muted" title={p.vocdoniProcessId}>{short(p.vocdoniProcessId)}</span>
+                  </div>
+                  <ul className="p-questions">
+                    {p.questions.map((q) => (
+                      <li key={q.id} className="p-question">
+                        <span className="pq-title">{q.title}</span>
+                        <span className="pq-kind">{q.kind}</span>
+                        {q.status && <span className={`status s-${q.status.toLowerCase()}`}>{q.status}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                  {p.vocdoniProcessId && <VotingLink processId={p.vocdoniProcessId} />}
+                </li>
               )
             })}
           </ul>
@@ -249,41 +233,6 @@ function VotingLink({ processId }) {
     <div className="vote-link">
       <a href={url} target="_blank" rel="noreferrer">Voting page ↗</a>
       <button className="link" onClick={copy}>{copied ? 'Copied!' : 'Copy link'}</button>
-    </div>
-  )
-}
-
-// Per-option numbers from the results histogram, by voting type:
-// - single: one field whose values are the choices → results[0] is the per-choice count.
-// - multiple (approval): one field per choice, each [#voted-0, #voted-1] → count is field[1].
-// - ranked: one field per choice, each a histogram over rank values → Borda score Σ count·value.
-export function tallyCounts(results, votingType) {
-  if (!results || !results[0]) return null
-  if (votingType === 'multiple') return results.map((f) => Number(f?.[1]) || 0)
-  if (votingType === 'ranked')
-    return results.map((f) => f.reduce((s, c, v) => s + (Number(c) || 0) * v, 0))
-  return results[0].map((v) => Number(v) || 0)
-}
-
-// Tally bars. Single/multiple fill against the census size (turnout share). Ranked shows a Borda
-// score, so it fills against the top score instead. Falls back to the leading value when unknown.
-function Tally({ result, choices, votingType }) {
-  const nums = tallyCounts(result.results, votingType)
-  if (!nums) return null
-  const denom = votingType === 'ranked' || !(result.censusSize > 0)
-    ? Math.max(1, ...nums)
-    : result.censusSize
-  return (
-    <div className="tally">
-      {nums.map((n, ci) => (
-        <div className="bar" key={ci}>
-          <span className="bar-label">{choices?.[ci] ?? `Choice ${ci}`}</span>
-          <span className="bar-track">
-            <span className="bar-fill" style={{ width: `${Math.min(100, (n / denom) * 100)}%` }} />
-          </span>
-          <span className="bar-val">{n}</span>
-        </div>
-      ))}
     </div>
   )
 }

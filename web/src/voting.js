@@ -1,38 +1,52 @@
 import { VocdoniApiClient } from '@vocdoni/api-client'
 import { VotingClient, EphemeralSigner } from '@vocdoni/api-voting'
 
-// Casts a ballot entirely through the Vocdoni SaaS API via the integrator SDK — CSP auth, CSP sign,
-// ballot build/encrypt, and relay. Never touches the chain directly. Returns the vote nullifier.
+// Casts ballots on a multi-question voting process (saas-backend #571) entirely through the SaaS API.
+// The voter authenticates ONCE against the process census, then signs + relays ONE vote per question
+// (each question is its own on-chain election). Returns [{ upstreamId, voteID }] per answered question.
 //
-// processId is our stored 24-hex ProcessID (Mongo id); the SDK resolves the 64-hex on-chain address
-// from it. bundleId/apiUrl come from GET /api/processes/{id}. `choices` is the on-chain ballot array:
+// `answers` = [{ upstreamId, choices }] — `choices` is the on-chain ballot array for that question:
 // single → [chosenIndex]; multiple → [v0..vN-1] (1 per pick); ranked → [v0..vN-1] (unique rank values).
-export async function castVote({ apiUrl, bundleId, processId, choices, memberNumber }) {
+export async function castProcessVotes({ apiUrl, processId, chainId, memberNumber, answers }) {
   const client = new VocdoniApiClient({ apiUrl })
 
-  // Auth-only census: the step-0 token is already verified (no 2FA).
-  const { authToken } = await client.bundle.authStep0(bundleId, { memberNumber })
+  // 1. Auth once per process. Auth-only census ⇒ the step-0 token is already verified (no OTP).
+  const { authToken } = await cspPost(apiUrl, `/processes/${processId}/auth/0`, { memberNumber })
+  if (!authToken) throw new Error('Authentication failed — check your member number.')
 
-  const election = await client.elections.get(processId)
-  const onchainId = election.address // 64-hex Vochain id the CSP + vote envelope are keyed by
+  // 2. Per answered question: CSP-sign a fresh ephemeral identity for that election, then build + relay.
+  const voting = new VotingClient({ client })
+  const results = []
+  for (const { upstreamId, choices } of answers) {
+    const signer = new EphemeralSigner()
+    const { signature, weight } = await cspPost(apiUrl, `/processes/${processId}/sign`, {
+      authToken,
+      payload: signer.address,
+      electionId: upstreamId, // the target question's on-chain election id
+    })
+    // VotingClient.vote builds/encodes the vote tx and relays it via POST /vote (unchanged endpoint).
+    const jobId = await voting.vote({
+      processId: upstreamId,
+      choices,
+      chainId,
+      signer,
+      cspSignature: signature,
+      cspWeight: weight,
+    })
+    const job = await client.jobs.waitFor(jobId)
+    results.push({ upstreamId, voteID: job.result?.voteID ?? jobId })
+  }
+  return results
+}
 
-  const { hasVoted } = await client.bundle.check(bundleId, { authToken, electionId: onchainId })
-  if (hasVoted) throw new Error('This member has already voted.')
-
-  // Fresh ephemeral identity per vote: the CSP signs its address, the same key signs the vote tx.
-  const signer = new EphemeralSigner()
-  const { signature, weight } = await client.bundle.sign(
-    bundleId, { authToken, electionId: onchainId, payload: signer.address })
-
-  const jobId = await new VotingClient({ client }).vote({
-    processId: onchainId,
-    choices,
-    chainId: election.chainId,
-    signer,
-    cspSignature: signature,
-    cspWeight: weight,
-    encryptionKeys: election.encryptionPublicKeys,
+// The #571 CSP voter endpoints (/processes/{id}/auth|check|sign) aren't in @vocdoni/api-client, so
+// call them with raw fetch. Public endpoints — no auth header.
+async function cspPost(apiUrl, path, body) {
+  const res = await fetch(`${apiUrl.replace(/\/$/, '')}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   })
-  const job = await client.jobs.waitFor(jobId)
-  return job.result?.voteID ?? jobId
+  if (!res.ok) throw new Error(`${path} → HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
 }

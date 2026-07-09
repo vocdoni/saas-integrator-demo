@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace HoaVoting.Api.Controllers;
 
-/// <summary>Public, read-only voting-page data keyed by the 24-hex ProcessID (#551). No auth.</summary>
+/// <summary>Public, read-only voting-page data for a multi-question process (#571). No auth.</summary>
 [ApiController]
 [AllowAnonymous]
 [Route("api/processes")]
@@ -18,33 +18,33 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
     [HttpGet("{processId}")]
     public async Task<ActionResult<VotingInfoResponse>> Get(string processId, CancellationToken ct)
     {
-        var p = await db.Proposals.SingleOrDefaultAsync(x => x.VocdoniProcessId == processId, ct);
+        var p = await db.Proposals.Include(x => x.Questions)
+            .SingleOrDefaultAsync(x => x.VocdoniProcessId == processId, ct);
         if (p is null) return NotFound();
 
-        var choices = JsonSerializer.Deserialize<List<string>>(p.ChoicesJson) ?? [];
-
-        // Live on-chain status/tally is best-effort — the page still renders if Vocdoni is unreachable.
-        int? voteCount = null;
-        string? onchainStatus = null;
-        List<List<string>>? results = null;
+        // Refresh per-question on-chain id + status best-effort (the page still renders if unreachable).
         try
         {
-            var r = await vocdoni.GetResultsAsync(processId, ct);
-            voteCount = r.VoteCount;
-            onchainStatus = r.Status;
-            results = r.Results;
+            var proc = await vocdoni.GetVotingProcessAsync(processId, ct);
+            foreach (var q in p.Questions)
+            {
+                var h = proc.Questions.ElementAtOrDefault(q.Order);
+                if (h is null) continue;
+                if (!string.IsNullOrEmpty(h.UpstreamId)) q.UpstreamId = h.UpstreamId!;
+                if (!string.IsNullOrEmpty(h.Status)) q.Status = h.Status!;
+            }
         }
-        catch (VocdoniApiException) { /* leave nulls */ }
-        catch (HttpRequestException) { /* leave nulls */ }
+        catch (VocdoniApiException) { /* serve stored values */ }
+        catch (HttpRequestException) { }
 
-        // Census size (eligible voters) lives on the process detail — best-effort, like the tally.
-        int? censusSize = null;
-        try { censusSize = await vocdoni.GetCensusSizeAsync(processId, ct); }
-        catch (VocdoniApiException) { /* leave null */ }
-        catch (HttpRequestException) { /* leave null */ }
+        var opts = vocdoniOptions.Value;
+        var questions = p.Questions.OrderBy(q => q.Order).Select(q => new PublicQuestion(
+            q.Id, q.Order, q.Title,
+            JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
+            q.Kind, q.UpstreamId, q.Status)).ToList();
 
         return new VotingInfoResponse(
-            p.VocdoniProcessId, p.VocdoniBundleId, vocdoniOptions.Value.BaseUrl, p.Title, p.Description, choices,
-            p.StartDate, p.EndDate, p.Status.ToString(), voteCount, onchainStatus, results, censusSize, p.VotingType);
+            p.VocdoniProcessId, opts.BaseUrl, opts.ChainId, p.Title, p.Description,
+            p.StartDate, p.EndDate, p.Status.ToString(), questions);
     }
 }

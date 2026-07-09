@@ -69,110 +69,131 @@ public sealed class DeleteMembersRequest
     public bool All { get; set; }
 }
 
-public sealed class CreateCensusRequest
+// --- multi-question /processes API (saas-backend #571) ---------------------
+
+/// <summary>POST /processes — a draft container with N questions. Census is inline (no separate census calls).</summary>
+public sealed class CreateVotingProcessRequest
 {
     public string OrgAddress { get; set; } = "";
-
-    /// <summary>Member fields used to authenticate voters (e.g. "memberNumber").</summary>
-    public List<string>? AuthFields { get; set; }
+    public CensusSpec Census { get; set; } = new();
+    /// <summary>MultiLangString, e.g. {"default":"..."}.</summary>
+    public Dictionary<string, string> Title { get; set; } = new();
+    public Dictionary<string, string>? Description { get; set; }
+    public string? StartDate { get; set; } // RFC3339
+    public string? EndDate { get; set; }   // RFC3339
+    public List<VotingProcessQuestionRequest> Questions { get; set; } = new();
 }
 
-public sealed class CreateCensusResponse
+/// <summary>Process census config — the census type is inferred from the auth/2FA fields.</summary>
+public sealed class CensusSpec
 {
-    public string Id { get; set; } = "";
-}
-
-public sealed class CreateMemberGroupRequest
-{
-    public string Title { get; set; } = "";
-    public string? Description { get; set; }
-    public bool IncludeAllMembers { get; set; }
-}
-
-public sealed class MemberGroupInfo
-{
-    public string Id { get; set; } = "";
-}
-
-public sealed class PublishCensusGroupRequest
-{
-    public List<string>? AuthFields { get; set; }
     public bool Weighted { get; set; }
+    public List<string>? AuthFields { get; set; }
+    public List<string>? TwoFaFields { get; set; }
+    public string? GroupId { get; set; }
+    public List<string>? MemberIds { get; set; }
 }
 
-public sealed class PublishedCensusResponse
+public sealed class VotingProcessQuestionRequest
 {
-    public string? Root { get; set; }
-    public int Size { get; set; }
-    public string? Uri { get; set; }
-}
-
-public sealed class CreateProcessRequest
-{
-    public string OrgAddress { get; set; } = "";
-    public string CensusId { get; set; } = "";
+    public Dictionary<string, string> Title { get; set; } = new();
+    public Dictionary<string, string>? Description { get; set; }
+    public List<VocdoniChoice> Choices { get; set; } = new();
+    /// <summary>"singlechoice" | "multichoice". Ranked/approval use <see cref="BallotProtocol"/> instead.</summary>
+    public string Type { get; set; } = "singlechoice";
+    public QuestionTypeSetup TypeSetup { get; set; } = new();
+    /// <summary>Raw vote-type override (wins over type/typeSetup) — used for ranked/approval/quadratic.</summary>
+    public BallotProtocol? BallotProtocol { get; set; }
+    public bool SecretUntilTheEnd { get; set; }
+    /// <summary>Per-question eligibility subset ⊆ census. NB: keyed "census" in the question JSON.</summary>
+    [JsonPropertyName("census")]
+    public EligibilitySpec? Eligibility { get; set; }
     public Dictionary<string, object>? Metadata { get; set; }
-    public ElectionParams? ElectionParams { get; set; }
 }
 
-public sealed class CreateProcessBundleRequest
+public sealed class VocdoniChoice
 {
-    public string CensusId { get; set; } = "";
-
-    /// <summary>ProcessIDs to include in the bundle (the on-chain election id also works; see #554).</summary>
-    public List<string> Processes { get; set; } = new();
+    public Dictionary<string, string> Title { get; set; } = new();
+    public uint Value { get; set; }
 }
 
-public sealed class CreateProcessBundleResponse
+public sealed class QuestionTypeSetup
 {
-    /// <summary>e.g. "https://.../process/bundle/{bundleId}". The id is the last path segment.</summary>
-    public string? Uri { get; set; }
-    public string? Root { get; set; }
+    public uint MinChoices { get; set; }
+    public uint MaxChoices { get; set; }
+    public bool UniqueChoices { get; set; }
 }
 
-public sealed class ElectionParams
-{
-    public Dictionary<string, string>? Title { get; set; }
-    public Dictionary<string, string>? Description { get; set; }
-    public string? StartDate { get; set; }
-    public string? EndDate { get; set; }
-    public int? MaxCensusSize { get; set; }
-    public List<ElectionQuestion>? Questions { get; set; }
-    public ElectionType? ElectionType { get; set; }
-    public VoteType? VoteType { get; set; }
-}
-
-public sealed class ElectionQuestion
-{
-    public Dictionary<string, string>? Title { get; set; }
-    public Dictionary<string, string>? Description { get; set; }
-    public List<ElectionChoice>? Choices { get; set; }
-}
-
-public sealed class ElectionChoice
-{
-    public Dictionary<string, string>? Title { get; set; }
-    public int Value { get; set; }
-}
-
-public sealed class ElectionType
-{
-    public bool Autostart { get; set; }
-    public bool Interruptible { get; set; }
-}
-
-public sealed class VoteType
+/// <summary>Raw on-chain vote-type override (note <c>UniqueValues</c>, not UniqueChoices).</summary>
+public sealed class BallotProtocol
 {
     public int MaxCount { get; set; }
     public int MaxValue { get; set; }
     public int MaxVoteOverwrites { get; set; }
-    public bool UniqueChoices { get; set; }
+    public int CostExponent { get; set; }
+    public int MaxTotalCost { get; set; }
+    public bool UniqueValues { get; set; }
+    public bool CostFromWeight { get; set; }
 }
 
-public sealed class SetProcessStatusRequest
+public sealed class EligibilitySpec
 {
-    /// <summary>One of: ready, paused, ended, canceled.</summary>
+    public string? GroupId { get; set; }
+    public List<string>? MemberIds { get; set; }
+}
+
+public sealed class CreateVotingProcessResponse
+{
+    public string? ProcessId { get; set; }
+}
+
+/// <summary>GET /processes/{id} — fully hydrated; questions carry upstreamId + status after publish.</summary>
+public sealed class VotingProcessResponse
+{
+    public string? Id { get; set; }
+    public string? OrgAddress { get; set; }
+    public bool Published { get; set; }
+    public CensusSpec? Census { get; set; }
+    public Dictionary<string, string>? Title { get; set; }
+    public Dictionary<string, string>? Description { get; set; }
+    public string? StartDate { get; set; }
+    public string? EndDate { get; set; }
+    public List<VotingProcessQuestion> Questions { get; set; } = new();
+}
+
+public sealed class VotingProcessQuestion
+{
+    public string? Id { get; set; }
+    public string? ParentProcessId { get; set; }
+    public Dictionary<string, string>? Title { get; set; }
+    public List<VocdoniChoice>? Choices { get; set; }
+    public string? Type { get; set; }
+    public QuestionTypeSetup? TypeSetup { get; set; }
+    public BallotProtocol? BallotProtocol { get; set; }
+    public List<string>? EligibleMemberIds { get; set; }
+    /// <summary>On-chain election id (hex), assigned at publish.</summary>
+    public string? UpstreamId { get; set; }
+    /// <summary>ready | paused | ended | canceled | results.</summary>
+    public string? Status { get; set; }
+}
+
+public sealed class SetQuestionsStatusRequest
+{
+    /// <summary>ready | paused | ended | canceled.</summary>
     public string Status { get; set; } = "";
+    /// <summary>Null/empty ⇒ all published questions.</summary>
+    public List<QuestionStatusId>? Questions { get; set; }
+}
+
+public sealed class QuestionStatusId
+{
+    public string Id { get; set; } = "";
+}
+
+public sealed class VotingProcessValidateResponse
+{
+    public bool Valid { get; set; }
+    public List<string>? Errors { get; set; }
 }
 
 public sealed class EnqueuedResponse
@@ -186,28 +207,4 @@ public sealed class JobStatusResponse
     /// <summary>One of: pending, completed, failed.</summary>
     public string? Status { get; set; }
     public string? Error { get; set; }
-}
-
-/// <summary>Subset of GET /process/{id}: the published census carries its <c>size</c>.</summary>
-public sealed class ProcessDetailResponse
-{
-    public ProcessCensusInfo? Census { get; set; }
-}
-
-public sealed class ProcessCensusInfo
-{
-    /// <summary>Published census size — the eligible voter count for this process.</summary>
-    public int Size { get; set; }
-}
-
-public sealed class ProcessResultsResponse
-{
-    public string? Status { get; set; }
-    public bool FinalResults { get; set; }
-    public int VoteCount { get; set; }
-    public string? StartDate { get; set; }
-    public string? EndDate { get; set; }
-
-    /// <summary>Per-question, per-choice tallies (strings, big-int safe).</summary>
-    public List<List<string>>? Results { get; set; }
 }
