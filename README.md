@@ -14,8 +14,9 @@ creates **proposals**, and reads voting **results**. Built on the Vocdoni SaaS A
 > A **proposal is now a voting process with N questions**, each its own on-chain election; the legacy
 > singular `/process` + `/process/bundle` flow was removed. #571 is **deployed nowhere yet** — run a
 > local saas-backend on the `feat/processes-api` branch and set `VOCDONI_BASE_URL` + `VOCDONI_CHAIN_ID`
-> to point at it. Voting is per-question (CSP sign + relay client-side); the SaaS exposes **no
-> per-question results endpoint** in #571, so the owner list and voting page show status only.
+> to point at it. Voting is per-question (CSP sign + relay client-side); per-question tallies come from
+> `GET /processes/{id}/results`. The one remaining gap: the question read omits the `chainId` needed to
+> sign votes, so it's supplied via `Vocdoni:ChainId` config.
 
 ## Architecture
 

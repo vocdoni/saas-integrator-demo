@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../api.js'
 import { castProcessVotes } from '../voting.js'
 import { isFinished } from '../status.js'
+import QuestionResults from './QuestionResults.jsx'
 
 const fmt = (s) => {
   try {
@@ -141,7 +142,9 @@ export default function VotingPage({ processId }) {
           ))}
         </div>
       ) : done ? (
-        <div className="vote-soon">Voting has ended. Per-question tallies aren’t exposed by the API yet.</div>
+        <div className="results-list">
+          {info.questions.map((q) => <QuestionResults key={q.id} q={q} />)}
+        </div>
       ) : (
         <form onSubmit={submit}>
           {info.questions.map((q) => (

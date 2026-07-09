@@ -84,8 +84,8 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
 
         var items = await db.Proposals.Include(p => p.Questions)
             .Where(p => p.AssociationId == associationId).OrderBy(p => p.Id).ToListAsync(ct);
-        await ReconcileAsync(items, ct);
-        return items.Select(ToResponse).ToList();
+        var results = await HydrateAsync(items, ct);
+        return items.Select(p => ToResponse(p, results.GetValueOrDefault(p.Id))).ToList();
     }
 
     [HttpGet("{id:int}")]
@@ -97,8 +97,8 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var p = await db.Proposals.Include(x => x.Questions)
             .SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
         if (p is null) return NotFound();
-        await ReconcileAsync([p], ct);
-        return ToResponse(p);
+        var results = await HydrateAsync([p], ct);
+        return ToResponse(p, results.GetValueOrDefault(p.Id));
     }
 
     /// <summary>Close voting: end every question of the process.</summary>
@@ -117,32 +117,43 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         return NoContent();
     }
 
-    // Refresh each proposal's questions (on-chain upstreamId + status) from the process read, and mark
-    // the proposal Closed once every published question has ended (or its end date has passed). Best-
-    // effort per not-yet-Closed proposal; the SaaS has no results endpoint for questions in #571.
-    private async Task ReconcileAsync(IReadOnlyList<Proposal> proposals, CancellationToken ct)
+    // Refresh each proposal's questions (live on-chain status + tally) from GET /processes/{id}/results,
+    // mark the proposal Closed once every question has ended (or its end date passed), and return the
+    // per-question results keyed by on-chain id for the response. Best-effort per proposal.
+    private async Task<Dictionary<int, Dictionary<string, VotingProcessQuestionResults>>> HydrateAsync(
+        IReadOnlyList<Proposal> proposals, CancellationToken ct)
     {
+        var map = new Dictionary<int, Dictionary<string, VotingProcessQuestionResults>>();
         var changed = false;
-        foreach (var p in proposals.Where(x => x.Status != ProposalStatus.Closed))
+        foreach (var p in proposals)
         {
-            VotingProcessResponse? proc = null;
-            try { proc = await vocdoni.GetVotingProcessAsync(p.VocdoniProcessId, ct); }
-            catch (VocdoniApiException) { /* upstream unreachable — leave as-is */ }
+            var byUpstream = new Dictionary<string, VotingProcessQuestionResults>();
+            try
+            {
+                var res = await vocdoni.GetVotingProcessResultsAsync(p.VocdoniProcessId, ct);
+                foreach (var qr in res.Questions)
+                    if (!string.IsNullOrEmpty(qr.UpstreamId)) byUpstream[qr.UpstreamId!] = qr;
+            }
+            catch (VocdoniApiException) { /* not published yet / unreachable — serve stored values */ }
             catch (HttpRequestException) { }
+            map[p.Id] = byUpstream;
 
-            if (proc is not null)
-                foreach (var q in p.Questions)
+            foreach (var q in p.Questions)
+                if (!string.IsNullOrEmpty(q.UpstreamId) && byUpstream.TryGetValue(q.UpstreamId, out var qr)
+                    && !string.IsNullOrEmpty(qr.Status) && qr.Status != q.Status)
                 {
-                    var h = proc.Questions.ElementAtOrDefault(q.Order);
-                    if (h is null) continue;
-                    if (!string.IsNullOrEmpty(h.UpstreamId) && h.UpstreamId != q.UpstreamId) { q.UpstreamId = h.UpstreamId!; changed = true; }
-                    if (!string.IsNullOrEmpty(h.Status) && h.Status != q.Status) { q.Status = h.Status!; changed = true; }
+                    q.Status = qr.Status!;
+                    changed = true;
                 }
 
-            var ended = (p.Questions.Count > 0 && p.Questions.All(q => IsEnded(q.Status))) || p.EndDate < DateTimeOffset.UtcNow;
-            if (ended) { p.Status = ProposalStatus.Closed; changed = true; }
+            if (p.Status != ProposalStatus.Closed)
+            {
+                var ended = (p.Questions.Count > 0 && p.Questions.All(q => IsEnded(q.Status))) || p.EndDate < DateTimeOffset.UtcNow;
+                if (ended) { p.Status = ProposalStatus.Closed; changed = true; }
+            }
         }
         if (changed) await db.SaveChangesAsync(ct);
+        return map;
     }
 
     private static bool IsEnded(string status) => status.ToUpperInvariant() is "ENDED" or "CANCELED" or "RESULTS";
@@ -177,13 +188,21 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
 
     private static Dictionary<string, string> Lang(string text) => new() { ["default"] = text };
 
-    private static ProposalResponse ToResponse(Proposal p) => new(
-        p.Id, p.AssociationId, p.Title, p.Description,
-        p.Status.ToString(), p.VocdoniProcessId, p.StartDate, p.EndDate, p.CreatedAt,
-        p.Questions.OrderBy(q => q.Order).Select(q => new QuestionResponse(
-            q.Id, q.Order, q.Title,
-            JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
-            q.Kind, q.UpstreamId, q.Status)).ToList());
+    private static ProposalResponse ToResponse(Proposal p, IReadOnlyDictionary<string, VotingProcessQuestionResults>? results = null)
+    {
+        var questions = p.Questions.OrderBy(q => q.Order).Select(q =>
+        {
+            VotingProcessQuestionResults? qr = null;
+            if (results is not null && !string.IsNullOrEmpty(q.UpstreamId)) results.TryGetValue(q.UpstreamId, out qr);
+            return new QuestionResponse(
+                q.Id, q.Order, q.Title,
+                JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
+                q.Kind, q.UpstreamId, q.Status, qr?.VoteCount ?? 0, qr?.Results);
+        }).ToList();
+        return new ProposalResponse(
+            p.Id, p.AssociationId, p.Title, p.Description,
+            p.Status.ToString(), p.VocdoniProcessId, p.StartDate, p.EndDate, p.CreatedAt, questions);
+    }
 
     private async Task<(Association?, ActionResult?)> ResolveAsync(int associationId, CancellationToken ct)
     {

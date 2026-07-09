@@ -196,6 +196,24 @@ public sealed class VotingProcessValidateResponse
     public List<string>? Errors { get; set; }
 }
 
+/// <summary>GET /processes/{id}/results — per-question on-chain tallies (once published).</summary>
+public sealed class VotingProcessResultsResponse
+{
+    public string? Id { get; set; }
+    public List<VotingProcessQuestionResults> Questions { get; set; } = new();
+}
+
+public sealed class VotingProcessQuestionResults
+{
+    public string? QuestionId { get; set; }
+    public string? UpstreamId { get; set; }
+    public string? Status { get; set; }
+    public int VoteCount { get; set; }
+    public bool FinalResults { get; set; }
+    /// <summary>Per-field, per-value histogram (strings, big-int safe) — same shape as the legacy results.</summary>
+    public List<List<string>>? Results { get; set; }
+}
+
 public sealed class EnqueuedResponse
 {
     public string? JobId { get; set; }

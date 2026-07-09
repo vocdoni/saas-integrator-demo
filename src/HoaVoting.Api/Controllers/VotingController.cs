@@ -22,26 +22,27 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
             .SingleOrDefaultAsync(x => x.VocdoniProcessId == processId, ct);
         if (p is null) return NotFound();
 
-        // Refresh per-question on-chain id + status best-effort (the page still renders if unreachable).
+        // Live per-question status + tally, best-effort (the page still renders if unreachable).
+        var byUpstream = new Dictionary<string, VotingProcessQuestionResults>();
         try
         {
-            var proc = await vocdoni.GetVotingProcessAsync(processId, ct);
-            foreach (var q in p.Questions)
-            {
-                var h = proc.Questions.ElementAtOrDefault(q.Order);
-                if (h is null) continue;
-                if (!string.IsNullOrEmpty(h.UpstreamId)) q.UpstreamId = h.UpstreamId!;
-                if (!string.IsNullOrEmpty(h.Status)) q.Status = h.Status!;
-            }
+            var res = await vocdoni.GetVotingProcessResultsAsync(processId, ct);
+            foreach (var qr in res.Questions)
+                if (!string.IsNullOrEmpty(qr.UpstreamId)) byUpstream[qr.UpstreamId!] = qr;
         }
         catch (VocdoniApiException) { /* serve stored values */ }
         catch (HttpRequestException) { }
 
         var opts = vocdoniOptions.Value;
-        var questions = p.Questions.OrderBy(q => q.Order).Select(q => new PublicQuestion(
-            q.Id, q.Order, q.Title,
-            JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
-            q.Kind, q.UpstreamId, q.Status)).ToList();
+        var questions = p.Questions.OrderBy(q => q.Order).Select(q =>
+        {
+            VotingProcessQuestionResults? qr = null;
+            if (!string.IsNullOrEmpty(q.UpstreamId)) byUpstream.TryGetValue(q.UpstreamId, out qr);
+            return new PublicQuestion(
+                q.Id, q.Order, q.Title,
+                JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
+                q.Kind, q.UpstreamId, qr?.Status ?? q.Status, qr?.VoteCount ?? 0, qr?.Results);
+        }).ToList();
 
         return new VotingInfoResponse(
             p.VocdoniProcessId, opts.BaseUrl, opts.ChainId, p.Title, p.Description,

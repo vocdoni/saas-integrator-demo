@@ -1125,6 +1125,26 @@ code {
   border-radius: 999px;
   padding: 1px 8px;
 }
+.p-question-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.p-question-block:first-child {
+  border-top: none;
+}
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.q-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
 .vote-soon {
   display: flex;

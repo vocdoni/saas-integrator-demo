@@ -58,7 +58,10 @@ public record QuestionResponse(
     VotingType Kind,
     // On-chain election id (hex) + status, once the process is published.
     string UpstreamId,
-    string Status);
+    string Status,
+    // On-chain tally, best-effort (GET /processes/{id}/results). Results is the histogram matrix.
+    int VoteCount,
+    List<List<string>>? Results);
 
 /// <summary>Public, read-only voting-page payload (no auth). Casting is client-side per question.</summary>
 public record VotingInfoResponse(
@@ -82,4 +85,7 @@ public record PublicQuestion(
     VotingType Kind,
     // The on-chain election id the voter signs against and relays to; empty until published.
     string UpstreamId,
-    string Status);
+    string Status,
+    // On-chain tally (best-effort), for the finished-state results. Results is the histogram matrix.
+    int VoteCount,
+    List<List<string>>? Results);

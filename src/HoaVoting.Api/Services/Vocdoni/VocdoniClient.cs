@@ -100,6 +100,10 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
     public Task<VotingProcessResponse> GetVotingProcessAsync(string processId, CancellationToken ct = default) =>
         SendAsync<VotingProcessResponse>(HttpMethod.Get, $"/processes/{processId}", null, ct);
 
+    /// <summary>Reads per-question on-chain results (public; only once the process is published).</summary>
+    public Task<VotingProcessResultsResponse> GetVotingProcessResultsAsync(string processId, CancellationToken ct = default) =>
+        SendAsync<VotingProcessResultsResponse>(HttpMethod.Get, $"/processes/{processId}/results", null, ct);
+
     /// <summary>Changes question status (e.g. "ended"); a null/empty <paramref name="questionIds"/> targets all published questions.</summary>
     public async Task SetQuestionsStatusAsync(string processId, string status, List<string>? questionIds = null, CancellationToken ct = default)
     {

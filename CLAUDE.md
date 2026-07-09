@@ -69,15 +69,16 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   **vocdoni-ballot-protocol** skill for the encoding.
 - **Async everything via jobs.** Publish, question-status change, vote relay, bulk member add return a
   `jobId`; the client polls `GET /jobs/{id}` (fail-fast on `failed`). Publish is idempotent (200).
-- **Status reconcile.** A question can end on-chain (or the process by its end date) without the DB
-  knowing, so `ProposalsController` List/Get + `VotingController` re-`GET /processes/{id}` to refresh
-  per-question `UpstreamId`/`Status` and mark the proposal `Closed` when all questions ended. The
-  public page also derives finished via `isFinished` (`web/src/status.js`).
+- **Status + tally reconcile.** `ProposalsController` List/Get + `VotingController` call
+  `GET /processes/{id}/results` (per-question live on-chain `status` + `voteCount` + `results` matrix),
+  refresh each question's `Status`, mark the proposal `Closed` when all questions ended, and pass the
+  results into the response (matched by `UpstreamId`). Tallies render via `web/src/tally.js`
+  `tallyCounts(results, kind)` + `QuestionResults.jsx` (single=`results[0]`, multiple=`results[i][1]`,
+  ranked=Borda `Σ results[i][v]·v`). The public page also derives finished via `isFinished`.
 - **Auth-only census.** Voters authenticate by **member number** (no 2FA); the process census is
   inline (`census: { authFields: ["memberNumber"], memberIds }`) — no separate census/group/publish.
-- **Two upstream gaps (#571).** No per-question **results** endpoint (the voting page/owner list show
-  status only — tallies TODO), and the question read has no **`chainId`** (configured via
-  `Vocdoni:ChainId`, exposed to the page for vote signing).
+- **One remaining #571 gap:** the question read has no **`chainId`** → configured via `Vocdoni:ChainId`,
+  exposed to the page for vote signing.
 
 ## Conventions
 

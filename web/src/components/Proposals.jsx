@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { isFinished } from '../status.js'
 import DangerZone from './DangerZone.jsx'
+import QuestionResults from './QuestionResults.jsx'
 
 const pad = (n) => String(n).padStart(2, '0')
 const toLocalInput = (d) =>
@@ -195,15 +196,17 @@ export default function Proposals({ assoc }) {
                     <span className={`status s-${status.toLowerCase()}`}>{status}</span>
                     <span className="mono small muted" title={p.vocdoniProcessId}>{short(p.vocdoniProcessId)}</span>
                   </div>
-                  <ul className="p-questions">
+                  <div className="p-questions">
                     {p.questions.map((q) => (
-                      <li key={q.id} className="p-question">
-                        <span className="pq-title">{q.title}</span>
-                        <span className="pq-kind">{q.kind}</span>
-                        {q.status && <span className={`status s-${q.status.toLowerCase()}`}>{q.status}</span>}
-                      </li>
+                      <div key={q.id} className="p-question-block">
+                        <div className="p-question">
+                          <span className="pq-kind">{q.kind}</span>
+                          {q.status && <span className={`status s-${q.status.toLowerCase()}`}>{q.status}</span>}
+                        </div>
+                        <QuestionResults q={q} />
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                   {p.vocdoniProcessId && <VotingLink processId={p.vocdoniProcessId} />}
                 </li>
               )
