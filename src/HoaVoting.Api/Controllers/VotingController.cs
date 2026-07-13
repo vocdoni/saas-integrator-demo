@@ -34,6 +34,9 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
         catch (HttpRequestException) { }
 
         var opts = vocdoniOptions.Value;
+        // The page calls the SaaS API from the browser, so hand it a browser-reachable URL (PublicBaseUrl),
+        // which may differ from the backend's own BaseUrl (local Docker: host.docker.internal vs localhost).
+        var apiUrl = string.IsNullOrEmpty(opts.PublicBaseUrl) ? opts.BaseUrl : opts.PublicBaseUrl;
         var questions = p.Questions.OrderBy(q => q.Order).Select(q =>
         {
             VotingProcessQuestionResults? qr = null;
@@ -45,7 +48,7 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
         }).ToList();
 
         return new VotingInfoResponse(
-            p.VocdoniProcessId, opts.BaseUrl, opts.ChainId, p.Title, p.Description,
+            p.VocdoniProcessId, apiUrl, opts.ChainId, p.Title, p.Description,
             p.StartDate, p.EndDate, p.Status.ToString(), questions);
     }
 }

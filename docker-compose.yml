@@ -9,6 +9,9 @@ services:
       ConnectionStrings__Default: "Data Source=/data/hoavoting.db"
       # Vocdoni API token (required for any Vocdoni-backed call).
       Vocdoni__BaseUrl: ${VOCDONI_BASE_URL:-https://saas-api-dev.vocdoni.net}
+      # Browser-facing SaaS URL handed to the voting page (defaults to BaseUrl). In local Docker the
+      # browser can't resolve host.docker.internal, so point it at the host-published address.
+      Vocdoni__PublicBaseUrl: ${VOCDONI_PUBLIC_BASE_URL:-}
       Vocdoni__ApiToken: ${VOCDONI_API_TOKEN:-}
       Vocdoni__IntegratorAddress: ${VOCDONI_INTEGRATOR_ADDRESS:-}
       # Vochain chain id — exposed to the voting page so it can sign vote txs (the #571 question
@@ -26,7 +29,7 @@ services:
     build:
       context: ./web
     ports:
-      - "3000:80"
+      - "5000:80"
     depends_on:
       - api
 
