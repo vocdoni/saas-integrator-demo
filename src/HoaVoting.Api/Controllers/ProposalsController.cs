@@ -101,7 +101,11 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         return ToResponse(p, results.GetValueOrDefault(p.Id));
     }
 
-    /// <summary>Close voting: end every question of the process.</summary>
+    /// <summary>
+    /// Close voting: enqueue the on-chain end of every question and return immediately (the change is
+    /// async). We don't optimistically mark the proposal Closed — the real status is reconciled from
+    /// GET /processes/{id}/results by HydrateAsync once the end tx mines and the questions report ended.
+    /// </summary>
     [HttpPost("{id:int}/close")]
     public async Task<ActionResult> Close(int associationId, int id, CancellationToken ct)
     {
@@ -112,9 +116,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         if (p is null) return NotFound();
 
         await vocdoni.SetQuestionsStatusAsync(p.VocdoniProcessId, "ended", null, ct);
-        p.Status = ProposalStatus.Closed;
-        await db.SaveChangesAsync(ct);
-        return NoContent();
+        return Accepted();
     }
 
     // Refresh each proposal's questions (live on-chain status + tally) from GET /processes/{id}/results,

@@ -29,6 +29,7 @@ export default function Proposals({ assoc }) {
   const [form, setForm] = useState(blankForm())
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [closing, setClosing] = useState(() => new Set()) // proposal ids with a pending close
 
   const base = `/associations/${assoc.id}/proposals`
 
@@ -86,15 +87,39 @@ export default function Proposals({ assoc }) {
     }
   }
 
+  const unmarkClosing = (pid) =>
+    setClosing((s) => {
+      const n = new Set(s)
+      n.delete(pid)
+      return n
+    })
+
+  // The close endpoint enqueues the on-chain end and returns immediately; the real status only flips
+  // to Closed once the end tx mines. Show a "Closing…" badge and auto-refresh until it does.
   async function close(pid) {
     if (!confirm('Close voting on this process (ends every question)?')) return
     setError('')
+    setClosing((s) => new Set(s).add(pid))
     try {
       await api(`${base}/${pid}/close`, { method: 'POST' })
-      await load()
     } catch (e) {
       setError(e.message)
+      unmarkClosing(pid)
+      return
     }
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 3000))
+      let fresh
+      try {
+        fresh = await api(base) // re-fetch without load()'s full-list "Loading…" flicker
+      } catch {
+        continue
+      }
+      setItems(fresh)
+      const p = fresh.find((x) => x.id === pid)
+      if (!p || p.status === 'Closed' || isFinished(p)) break
+    }
+    unmarkClosing(pid)
   }
 
   return (
@@ -188,7 +213,11 @@ export default function Proposals({ assoc }) {
                   <div className="p-head">
                     <span className="p-title">{p.title}</span>
                     <div className="p-actions">
-                      {!finished && <button className="link danger" onClick={() => close(p.id)}>Close</button>}
+                      {closing.has(p.id) ? (
+                        <span className="status s-closing">Closing… ⟳</span>
+                      ) : (
+                        !finished && <button className="link danger" onClick={() => close(p.id)}>Close</button>
+                      )}
                     </div>
                   </div>
                   {p.description && <p className="p-desc small">{p.description}</p>}

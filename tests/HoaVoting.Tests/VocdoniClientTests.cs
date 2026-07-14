@@ -139,17 +139,18 @@ public class VocdoniClientTests
     }
 
     [Fact]
-    public async Task SetQuestionsStatus_puts_and_polls_job()
+    public async Task SetQuestionsStatus_puts_and_returns_without_polling()
     {
+        // Fire-and-forget: enqueue the end (202) and return. The real status is reconciled from
+        // /results on the next read, so we must NOT poll /jobs here.
         var handler = new SequenceHandler(
-            (HttpStatusCode.Accepted, """{"jobId":"j1"}"""),
-            (HttpStatusCode.OK, """{"status":"completed"}"""));
+            (HttpStatusCode.Accepted, """{"jobId":"j1"}"""));
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
         await client.SetQuestionsStatusAsync("proc1", "ended");
 
-        Assert.Equal("/processes/proc1/questions/status", handler.Paths[0]);
-        Assert.Equal("/jobs/j1", handler.Paths[^1]);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("/processes/proc1/questions/status", Assert.Single(handler.Paths));
     }
 
     // Returns each queued response in order (last one repeats), recording every request path.

@@ -105,20 +105,18 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         SendAsync<VotingProcessResultsResponse>(HttpMethod.Get, $"/processes/{processId}/results", null, ct);
 
     /// <summary>Changes question status (e.g. "ended"); a null/empty <paramref name="questionIds"/> targets all published questions.</summary>
-    public async Task SetQuestionsStatusAsync(string processId, string status, List<string>? questionIds = null, CancellationToken ct = default)
+    // ponytail: fire-and-forget — we enqueue the status change and return without waiting for the
+    // async job, so the caller's request stays fast. The real per-question status is reconciled from
+    // GET /processes/{id}/results on the next read (ProposalsController.HydrateAsync). A rejected
+    // enqueue still surfaces: SendCoreAsync throws VocdoniApiException on any non-2xx.
+    public Task SetQuestionsStatusAsync(string processId, string status, List<string>? questionIds = null, CancellationToken ct = default)
     {
         var body = new SetQuestionsStatusRequest
         {
             Status = status,
             Questions = questionIds?.Select(id => new QuestionStatusId { Id = id }).ToList(),
         };
-        using var resp = await SendCoreAsync(HttpMethod.Put, $"/processes/{processId}/questions/status", body, ct);
-        if (resp.StatusCode == HttpStatusCode.Accepted)
-        {
-            var enqueued = await ReadJsonAsync<EnqueuedResponse>(resp, ct);
-            if (!string.IsNullOrEmpty(enqueued.JobId))
-                await PollJobAsync(enqueued.JobId!, ct);
-        }
+        return SendAsync(HttpMethod.Put, $"/processes/{processId}/questions/status", body, ct);
     }
 
     /// <summary>Polls GET /jobs/{id} until the async transaction completes; throws on failure or timeout.</summary>

@@ -795,6 +795,23 @@ code {
   border-color: rgba(91, 101, 113, 0.22);
 }
 
+/* Client-side "close requested, end tx pending" — pulses until the real status flips to Closed. */
+.s-closing {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-color: rgba(154, 106, 26, 0.22);
+}
+
+.s-closing::before {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
 /* ---- results: tally bars ------------------------------------------------- */
 .results {
   margin-top: 12px;
