@@ -34,9 +34,9 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
         catch (HttpRequestException) { }
 
         var opts = vocdoniOptions.Value;
-        // The page calls the SaaS API from the browser, so hand it a browser-reachable URL (PublicBaseUrl),
-        // which may differ from the backend's own BaseUrl (local Docker: host.docker.internal vs localhost).
-        var apiUrl = string.IsNullOrEmpty(opts.PublicBaseUrl) ? opts.BaseUrl : opts.PublicBaseUrl;
+        // The page calls the SaaS API from the browser, so hand it the browser-reachable URL (BrowserUrl),
+        // which may differ from the backend's own ServerUrl (local Docker: host.docker.internal vs localhost).
+        var apiUrl = string.IsNullOrEmpty(opts.BrowserUrl) ? opts.ServerUrl : opts.BrowserUrl;
         var questions = p.Questions.OrderBy(q => q.Order).Select(q =>
         {
             VotingProcessQuestionResults? qr = null;

@@ -13,9 +13,9 @@
 set -uo pipefail
 
 [ -f .env ] && { set -a; . ./.env; set +a; }
-: "${VOCDONI_BASE_URL:?set VOCDONI_BASE_URL in .env}"
+: "${VOCDONI_SERVER_URL:?set VOCDONI_SERVER_URL in .env}"
 : "${VOCDONI_API_TOKEN:?set VOCDONI_API_TOKEN in .env}"
-B="$VOCDONI_BASE_URL"; H="Authorization: Bearer $VOCDONI_API_TOKEN"; CT="Content-Type: application/json"
+B="$VOCDONI_SERVER_URL"; H="Authorization: Bearer $VOCDONI_API_TOKEN"; CT="Content-Type: application/json"
 APP="${APP:-http://localhost:5095}"
 TITLE="${TITLE:-Reused-census process}"
 

@@ -46,7 +46,7 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
 > **This branch targets the multi-question `/processes` API (saas-backend #571, unmerged).** A
 > proposal is a **voting process container** with **N questions**, each its own on-chain election.
 > The legacy singular `/process` + `/process/bundle` flow was **removed**. #571 is deployed nowhere
-> yet — run a local saas-backend on the `feat/processes-api` branch and point `Vocdoni:BaseUrl` at it.
+> yet — run a local saas-backend on the `feat/processes-api` branch and point `Vocdoni:ServerUrl` at it.
 
 ## Big picture (read multiple files to grasp)
 

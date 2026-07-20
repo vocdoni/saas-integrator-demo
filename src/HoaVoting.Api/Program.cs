@@ -27,7 +27,7 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddHttpClient<IVocdoniClient, VocdoniClient>((sp, http) =>
 {
     var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<VocdoniOptions>>().Value;
-    http.BaseAddress = new Uri(o.BaseUrl);
+    http.BaseAddress = new Uri(o.ServerUrl);
     if (!string.IsNullOrEmpty(o.ApiToken))
         http.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", o.ApiToken);
