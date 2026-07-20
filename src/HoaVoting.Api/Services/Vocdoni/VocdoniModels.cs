@@ -153,6 +153,8 @@ public sealed class VotingProcessResponse
     public string? Id { get; set; }
     public string? OrgAddress { get; set; }
     public bool Published { get; set; }
+    /// <summary>Vochain chain id votes must be signed against (saas-backend #582). Exposed to the voting page.</summary>
+    public string? ChainId { get; set; }
     public CensusSpec? Census { get; set; }
     public Dictionary<string, string>? Title { get; set; }
     public Dictionary<string, string>? Description { get; set; }

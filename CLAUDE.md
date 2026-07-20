@@ -77,8 +77,10 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   ranked=Borda `Σ results[i][v]·v`). The public page also derives finished via `isFinished`.
 - **Auth-only census.** Voters authenticate by **member number** (no 2FA); the process census is
   inline (`census: { authFields: ["memberNumber"], memberIds }`) — no separate census/group/publish.
-- **One remaining #571 gap:** the question read has no **`chainId`** → configured via `Vocdoni:ChainId`,
-  exposed to the page for vote signing.
+- **`chainId` comes from the process (#582).** The process read (`GET /processes/{id}`) carries the
+  Vochain `chainId` votes must be signed against. `ProposalsController.Create` captures it from the
+  publish read-back onto `Proposal.ChainId`; `VotingController` exposes it to the page for vote
+  signing. (There is no `Vocdoni:ChainId` config anymore.)
 
 ## Conventions
 

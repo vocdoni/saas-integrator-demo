@@ -48,7 +48,7 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
         }).ToList();
 
         return new VotingInfoResponse(
-            p.VocdoniProcessId, apiUrl, opts.ChainId, p.Title, p.Description,
+            p.VocdoniProcessId, apiUrl, p.ChainId, p.Title, p.Description,
             p.StartDate, p.EndDate, p.Status.ToString(), questions);
     }
 }

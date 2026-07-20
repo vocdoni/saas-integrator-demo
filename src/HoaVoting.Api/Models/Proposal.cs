@@ -25,6 +25,9 @@ public class Proposal
     /// <summary>Vocdoni 24-hex ProcessID of the container (the handle for read/publish/status).</summary>
     public string VocdoniProcessId { get; set; } = "";
 
+    /// <summary>Vochain chain id the process's votes must be signed against (captured from the process read, #582).</summary>
+    public string ChainId { get; set; } = "";
+
     public List<ProposalQuestion> Questions { get; set; } = new();
 
     public DateTimeOffset StartDate { get; set; }

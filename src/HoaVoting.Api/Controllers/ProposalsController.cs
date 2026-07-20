@@ -56,6 +56,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             Title = req.Title,
             Description = req.Description,
             VocdoniProcessId = processId,
+            ChainId = published.ChainId ?? "",
             StartDate = req.StartDate,
             EndDate = req.EndDate,
             Status = ProposalStatus.Open,

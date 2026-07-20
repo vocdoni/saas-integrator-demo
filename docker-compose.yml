@@ -14,9 +14,6 @@ services:
       Vocdoni__PublicBaseUrl: ${VOCDONI_PUBLIC_BASE_URL:-}
       Vocdoni__ApiToken: ${VOCDONI_API_TOKEN:-}
       Vocdoni__IntegratorAddress: ${VOCDONI_INTEGRATOR_ADDRESS:-}
-      # Vochain chain id — exposed to the voting page so it can sign vote txs (the #571 question
-      # read doesn't include it). Match your target chain (local vocone / dev / stg).
-      Vocdoni__ChainId: ${VOCDONI_CHAIN_ID:-}
       # App auth + seeded admin.
       Jwt__SigningKey: ${JWT_SIGNING_KEY:-dev-only-insecure-signing-key-change-me-min-32-chars}
       Admin__Email: ${ADMIN_EMAIL:-admin@hoa.local}
