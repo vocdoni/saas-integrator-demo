@@ -131,7 +131,7 @@ public class VocdoniClientTests
     {
         var handler = new SequenceHandler(
             (HttpStatusCode.Accepted, """{"jobId":"job1"}"""),
-            (HttpStatusCode.OK, """{"status":"failed","error":"out of quota"}"""));
+            (HttpStatusCode.OK, """{"status":"failed","errors":["out of quota"]}"""));
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
         var ex = await Assert.ThrowsAsync<VocdoniApiException>(() => client.PublishVotingProcessAsync("proc1"));

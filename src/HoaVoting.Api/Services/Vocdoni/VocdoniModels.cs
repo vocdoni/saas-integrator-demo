@@ -226,5 +226,6 @@ public sealed class JobStatusResponse
 {
     /// <summary>One of: pending, completed, failed.</summary>
     public string? Status { get; set; }
-    public string? Error { get; set; }
+    /// <summary>Failure detail(s) when Status is "failed" (empty otherwise).</summary>
+    public List<string>? Errors { get; set; }
 }

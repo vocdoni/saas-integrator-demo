@@ -129,7 +129,7 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
             if (job.Status == "completed")
                 return;
             if (job.Status == "failed")
-                throw new VocdoniApiException(HttpStatusCode.BadGateway, $"job {jobId} failed: {job.Error}");
+                throw new VocdoniApiException(HttpStatusCode.BadGateway, $"job {jobId} failed: {string.Join("; ", job.Errors ?? [])}");
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
         throw new VocdoniApiException(HttpStatusCode.GatewayTimeout, $"job {jobId} did not complete within the timeout");
