@@ -7,8 +7,11 @@ services:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       # SQLite on a named volume so data survives container restarts.
       ConnectionStrings__Default: "Data Source=/data/hoavoting.db"
-      # Vocdoni API token (required for any Vocdoni-backed call).
-      Vocdoni__BaseUrl: ${VOCDONI_BASE_URL:-https://saas-api-dev.vocdoni.net}
+      # SaaS URL the backend calls server-to-server (required for any Vocdoni-backed call).
+      Vocdoni__ServerUrl: ${VOCDONI_SERVER_URL:-https://saas-api-dev.vocdoni.net}
+      # Browser-facing SaaS URL handed to the voting page (defaults to ServerUrl). In local Docker the
+      # browser can't resolve host.docker.internal, so point it at the host-published address.
+      Vocdoni__BrowserUrl: ${VOCDONI_BROWSER_URL:-}
       Vocdoni__ApiToken: ${VOCDONI_API_TOKEN:-}
       Vocdoni__IntegratorAddress: ${VOCDONI_INTEGRATOR_ADDRESS:-}
       # App auth + seeded admin.
@@ -23,7 +26,7 @@ services:
     build:
       context: ./web
     ports:
-      - "3000:80"
+      - "5000:80"
     depends_on:
       - api
 

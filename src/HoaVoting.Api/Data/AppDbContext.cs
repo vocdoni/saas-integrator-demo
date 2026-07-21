@@ -8,6 +8,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<Association> Associations => Set<Association>();
     public DbSet<Proposal> Proposals => Set<Proposal>();
+    public DbSet<ProposalQuestion> ProposalQuestions => Set<ProposalQuestion>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -23,6 +24,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne(p => p.Association)
             .WithMany(a => a.Proposals)
             .HasForeignKey(p => p.AssociationId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<ProposalQuestion>()
+            .HasOne(q => q.Proposal)
+            .WithMany(p => p.Questions)
+            .HasForeignKey(q => q.ProposalId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

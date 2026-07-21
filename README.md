@@ -9,6 +9,15 @@ creates **proposals**, and reads voting **results**. Built on the Vocdoni SaaS A
 >  - They now live on the Vocdoni **[developer portal](https://developer.vocdoni.io)**, start there for concepts, guides, and the end-to-end flow.
 >  - For the exact endpoints and payloads, check the **[SaaS API swagger](https://github.com/vocdoni/saas-backend/blob/main/docs/swagger.yaml)**.
 
+> [!WARNING]
+> **This branch integrates the multi-question `/processes` API from [saas-backend #571](https://github.com/vocdoni/saas-backend/pull/571) (unmerged).**
+> A **proposal is now a voting process with N questions**, each its own on-chain election; the legacy
+> singular `/process` + `/process/bundle` flow was removed. #571 is **deployed nowhere yet** — run a
+> local saas-backend on the `feat/processes-api` branch and set `VOCDONI_SERVER_URL` to point at it.
+> Voting is per-question (CSP sign + relay client-side); per-question tallies come from
+> `GET /processes/{id}/results`, and the `chainId` needed to sign votes now comes from the process read
+> itself ([saas-backend #582](https://github.com/vocdoni/saas-backend/pull/582)).
+
 ## Architecture
 
 The backend is a **Vocdoni integrator** — it creates and manages homeowners' associations as
@@ -51,8 +60,9 @@ integrator org.
 ```
 Jwt:SigningKey                     long random secret (>= 32 chars)
 Admin:Email / Admin:Password       seeds the admin on startup
-Vocdoni:BaseUrl                    Vocdoni SaaS base URL (dev: https://saas-api-dev.vocdoni.net;
+Vocdoni:ServerUrl                  SaaS base URL the backend calls (dev: https://saas-api-dev.vocdoni.net;
                                    stg: https://saas-api-stg.vocdoni.net)
+Vocdoni:BrowserUrl                 browser-facing SaaS URL for the voting page (defaults to ServerUrl)
 Vocdoni:ApiToken                   integrator org's API key (Bearer); needs the managed:write scope
 ConnectionStrings:Default          SQLite by default
 ```

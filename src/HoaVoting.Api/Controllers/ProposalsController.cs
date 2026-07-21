@@ -15,92 +15,61 @@ namespace HoaVoting.Api.Controllers;
 public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiControllerBase
 {
     /// <summary>
-    /// Create a proposal: snapshot current homeowners into a census, publish it, then create and
-    /// publish a Vocdoni voting process. Voters cast ballots client-side via the Vocdoni JS SDK.
-    /// ponytail: census publish + process publish/status are async jobs server-side; for a live
-    /// deployment poll GET /jobs/{jobId} between steps. Demo runs them sequentially.
+    /// Create a proposal as a Vocdoni multi-question voting process (saas-backend #571): author the
+    /// process (census inline over the current homeowners, one election per question), publish it
+    /// (async batch), then read it back to capture each question's on-chain election id + status.
+    /// Voters cast per question client-side.
     /// </summary>
     [HttpPost]
     public async Task<ActionResult<ProposalResponse>> Create(int associationId, CreateProposalRequest req, CancellationToken ct)
     {
         var (assoc, error) = await ResolveAsync(associationId, ct);
         if (error is not null) return error;
-        if (req.Choices.Count < 2) return BadRequest("A proposal needs at least two choices.");
+        if (req.Questions is null || req.Questions.Count == 0) return BadRequest("A proposal needs at least one question.");
+        if (req.Questions.Any(q => q.Choices.Count < 2)) return BadRequest("Each question needs at least two choices.");
 
         var org = assoc!.VocdoniOrgAddress;
-
         var members = await vocdoni.ListMembersAsync(org, ct);
-        var memberCount = members.Count(m => m.Id is not null);
-        if (memberCount == 0) return BadRequest("Add homeowners before creating a proposal.");
+        var memberIds = members.Where(m => m.Id is not null).Select(m => m.Id!).ToList();
+        if (memberIds.Count == 0) return BadRequest("Add homeowners before creating a proposal.");
 
-        // Auth-only CSP census: members authenticate by member number alone (no 2FA). We publish via a
-        // member group — that path supports auth-only censuses, where the plain /census/{id}/publish
-        // would reject them ("census type not found"). The group also populates census participants
-        // from its members, so no separate add-participants call is needed.
-        List<string> authFields = ["memberNumber"];
-        var groupId = await vocdoni.CreateAllMembersGroupAsync(org, $"Proposal: {req.Title}", ct);
-        var censusId = await vocdoni.CreateCensusAsync(org, authFields, ct);
-        await vocdoni.PublishCensusGroupAsync(censusId, groupId, authFields, ct);
-
-        var process = new CreateProcessRequest
+        var request = new CreateVotingProcessRequest
         {
             OrgAddress = org,
-            CensusId = censusId,
-            Metadata = new Dictionary<string, object> { ["title"] = req.Title, ["description"] = req.Description },
-            ElectionParams = new ElectionParams
-            {
-                Title = Lang(req.Title),
-                Description = Lang(req.Description),
-                StartDate = req.StartDate.UtcDateTime.ToString("o"),
-                EndDate = req.EndDate.UtcDateTime.ToString("o"),
-                MaxCensusSize = memberCount,
-                ElectionType = new ElectionType { Autostart = true, Interruptible = true },
-                VoteType = req.VotingType switch
-                {
-                    // Single: one field whose value is the chosen index (0..N-1).
-                    VotingType.Single => new VoteType { MaxCount = 1, MaxValue = req.Choices.Count - 1 },
-                    // Approval: one 0/1 field per option; multiple 1s allowed (uniqueChoices MUST be
-                    // false, else repeating a value — e.g. two selected options — is rejected).
-                    VotingType.Multiple => new VoteType { MaxCount = req.Choices.Count, MaxValue = 1, UniqueChoices = false },
-                    // Ranked (linear-weighted): one field per option, each a unique rank value 0..N-1.
-                    VotingType.Ranked => new VoteType { MaxCount = req.Choices.Count, MaxValue = req.Choices.Count - 1, UniqueChoices = true },
-                    _ => throw new ArgumentOutOfRangeException(nameof(req.VotingType)),
-                },
-                Questions =
-                [
-                    new ElectionQuestion
-                    {
-                        Title = Lang(req.Title),
-                        Description = Lang(req.Description),
-                        Choices = req.Choices
-                            .Select((c, i) => new ElectionChoice { Title = Lang(c.Title), Value = i })
-                            .ToList(),
-                    },
-                ],
-            },
+            // Auth-only census over the current homeowners (authenticate by member number, no 2FA).
+            Census = new CensusSpec { AuthFields = ["memberNumber"], MemberIds = memberIds },
+            Title = Lang(req.Title),
+            Description = Lang(req.Description),
+            StartDate = req.StartDate.UtcDateTime.ToString("o"),
+            EndDate = req.EndDate.UtcDateTime.ToString("o"),
+            Questions = req.Questions.Select(ToQuestionRequest).ToList(),
         };
 
-        // POST /process returns the 24-hex ProcessID — the one handle the integrator needs. It
-        // addresses status/results/metadata (saas-backend #551) and the bundle (#554).
-        var processId = await vocdoni.CreateProcessAsync(process, ct);
-        // Publish on-chain and wait until it's live (the bundle requires a published process).
-        await vocdoni.PublishProcessAsync(processId, ct);
-        var bundleId = await vocdoni.CreateBundleAsync(censusId, [processId], ct);
+        var processId = await vocdoni.CreateVotingProcessAsync(request, ct);
+        await vocdoni.PublishVotingProcessAsync(processId, ct);
+        // Read back to capture each question's on-chain id + status (assigned during the batch publish).
+        var published = await vocdoni.GetVotingProcessAsync(processId, ct);
 
         var proposal = new Proposal
         {
             AssociationId = assoc.Id,
             Title = req.Title,
             Description = req.Description,
-            VocdoniCensusId = censusId,
             VocdoniProcessId = processId,
-            VocdoniBundleId = bundleId,
-            ChoicesJson = JsonSerializer.Serialize(req.Choices.Select(c => c.Title)),
-            VotingType = req.VotingType,
+            ChainId = published.ChainId ?? "",
             StartDate = req.StartDate,
             EndDate = req.EndDate,
             Status = ProposalStatus.Open,
             CreatedAt = DateTimeOffset.UtcNow,
+            Questions = req.Questions.Select((q, i) => new ProposalQuestion
+            {
+                Order = i,
+                Title = q.Title,
+                ChoicesJson = JsonSerializer.Serialize(q.Choices.Select(c => c.Title)),
+                Kind = q.Kind,
+                UpstreamId = published.Questions.ElementAtOrDefault(i)?.UpstreamId ?? "",
+                Status = published.Questions.ElementAtOrDefault(i)?.Status ?? "",
+            }).ToList(),
         };
         db.Proposals.Add(proposal);
         await db.SaveChangesAsync(ct);
@@ -114,9 +83,10 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var (_, error) = await ResolveAsync(associationId, ct);
         if (error is not null) return error;
 
-        var items = await db.Proposals.Where(p => p.AssociationId == associationId).OrderBy(p => p.Id).ToListAsync(ct);
-        await ReconcileStatusesAsync(items, ct);
-        return items.Select(ToResponse).ToList();
+        var items = await db.Proposals.Include(p => p.Questions)
+            .Where(p => p.AssociationId == associationId).OrderBy(p => p.Id).ToListAsync(ct);
+        var results = await HydrateAsync(items, ct);
+        return items.Select(p => ToResponse(p, results.GetValueOrDefault(p.Id))).ToList();
     }
 
     [HttpGet("{id:int}")]
@@ -125,13 +95,18 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var (_, error) = await ResolveAsync(associationId, ct);
         if (error is not null) return error;
 
-        var p = await db.Proposals.SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
+        var p = await db.Proposals.Include(x => x.Questions)
+            .SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
         if (p is null) return NotFound();
-        await ReconcileStatusesAsync([p], ct);
-        return ToResponse(p);
+        var results = await HydrateAsync([p], ct);
+        return ToResponse(p, results.GetValueOrDefault(p.Id));
     }
 
-    /// <summary>Close voting on a proposal (ends the Vocdoni process).</summary>
+    /// <summary>
+    /// Close voting: enqueue the on-chain end of every question and return immediately (the change is
+    /// async). We don't optimistically mark the proposal Closed — the real status is reconciled from
+    /// GET /processes/{id}/results by HydrateAsync once the end tx mines and the questions report ended.
+    /// </summary>
     [HttpPost("{id:int}/close")]
     public async Task<ActionResult> Close(int associationId, int id, CancellationToken ct)
     {
@@ -141,61 +116,96 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var p = await db.Proposals.SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
         if (p is null) return NotFound();
 
-        await vocdoni.SetProcessStatusAsync(p.VocdoniProcessId, "ended", ct);
-        p.Status = ProposalStatus.Closed;
-        await db.SaveChangesAsync(ct);
-        return NoContent();
+        await vocdoni.SetQuestionsStatusAsync(p.VocdoniProcessId, "ended", null, ct);
+        return Accepted();
     }
 
-    [HttpGet("{id:int}/results")]
-    public async Task<ActionResult<ProposalResultsResponse>> Results(int associationId, int id, CancellationToken ct)
+    // Refresh each proposal's questions (live on-chain status + tally) from GET /processes/{id}/results,
+    // mark the proposal Closed once every question has ended (or its end date passed), and return the
+    // per-question results keyed by on-chain id for the response. Best-effort per proposal.
+    private async Task<Dictionary<int, Dictionary<string, VotingProcessQuestionResults>>> HydrateAsync(
+        IReadOnlyList<Proposal> proposals, CancellationToken ct)
     {
-        var (_, error) = await ResolveAsync(associationId, ct);
-        if (error is not null) return error;
-
-        var p = await db.Proposals.SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
-        if (p is null) return NotFound();
-
-        var r = await vocdoni.GetResultsAsync(p.VocdoniProcessId, ct);
-        // Census size lives on the process detail, not the results payload — fetch it best-effort.
-        int? censusSize = null;
-        try { censusSize = await vocdoni.GetCensusSizeAsync(p.VocdoniProcessId, ct); }
-        catch (VocdoniApiException) { /* leave null; the tally falls back client-side */ }
-        return new ProposalResultsResponse(p.VocdoniProcessId, r.Status, r.FinalResults, r.VoteCount, r.Results, censusSize);
-    }
-
-    // A proposal whose Vocdoni process has ended on-chain (RESULTS/ENDED/CANCELED) or whose end date
-    // has passed is closed, even if it was never explicitly closed here — e.g. an owner close that
-    // ended the process on-chain but failed to persist, or natural expiry. Reconcile the stored status
-    // (best-effort, Open proposals only) so every consumer of the API sees the real state.
-    private async Task ReconcileStatusesAsync(IReadOnlyList<Proposal> proposals, CancellationToken ct)
-    {
+        var map = new Dictionary<int, Dictionary<string, VotingProcessQuestionResults>>();
         var changed = false;
-        foreach (var p in proposals.Where(x => x.Status == ProposalStatus.Open))
+        foreach (var p in proposals)
         {
-            string? onchain = null;
-            try { onchain = (await vocdoni.GetResultsAsync(p.VocdoniProcessId, ct)).Status; }
-            catch (VocdoniApiException) { /* upstream unreachable — leave as-is */ }
-            catch (HttpRequestException) { }
-
-            var oc = (onchain ?? "").ToUpperInvariant();
-            if (oc is "RESULTS" or "ENDED" or "CANCELED" || p.EndDate < DateTimeOffset.UtcNow)
+            var byUpstream = new Dictionary<string, VotingProcessQuestionResults>();
+            try
             {
-                p.Status = ProposalStatus.Closed;
-                changed = true;
+                var res = await vocdoni.GetVotingProcessResultsAsync(p.VocdoniProcessId, ct);
+                foreach (var qr in res.Questions)
+                    if (!string.IsNullOrEmpty(qr.UpstreamId)) byUpstream[qr.UpstreamId!] = qr;
+            }
+            catch (VocdoniApiException) { /* not published yet / unreachable — serve stored values */ }
+            catch (HttpRequestException) { }
+            map[p.Id] = byUpstream;
+
+            foreach (var q in p.Questions)
+                if (!string.IsNullOrEmpty(q.UpstreamId) && byUpstream.TryGetValue(q.UpstreamId, out var qr)
+                    && !string.IsNullOrEmpty(qr.Status) && qr.Status != q.Status)
+                {
+                    q.Status = qr.Status!;
+                    changed = true;
+                }
+
+            if (p.Status != ProposalStatus.Closed)
+            {
+                var ended = (p.Questions.Count > 0 && p.Questions.All(q => IsEnded(q.Status))) || p.EndDate < DateTimeOffset.UtcNow;
+                if (ended) { p.Status = ProposalStatus.Closed; changed = true; }
             }
         }
         if (changed) await db.SaveChangesAsync(ct);
+        return map;
+    }
+
+    private static bool IsEnded(string status) => status.ToUpperInvariant() is "ENDED" or "CANCELED" or "RESULTS";
+
+    // Map the demo's UI kind to a #571 question. singlechoice/multichoice are named types; ranked uses
+    // the raw ballotProtocol override (linear-weighted: each option gets a unique rank value 0..n-1).
+    private static VotingProcessQuestionRequest ToQuestionRequest(QuestionInput q)
+    {
+        var n = q.Choices.Count;
+        var choices = q.Choices.Select((c, i) => new VocdoniChoice { Title = Lang(c.Title), Value = (uint)i }).ToList();
+        return q.Kind switch
+        {
+            VotingType.Single => new VotingProcessQuestionRequest
+            {
+                Title = Lang(q.Title), Choices = choices, Type = "singlechoice",
+                TypeSetup = new QuestionTypeSetup { MinChoices = 1, MaxChoices = 1, UniqueChoices = false },
+            },
+            VotingType.Multiple => new VotingProcessQuestionRequest
+            {
+                Title = Lang(q.Title), Choices = choices, Type = "multichoice",
+                TypeSetup = new QuestionTypeSetup { MinChoices = 1, MaxChoices = (uint)n, UniqueChoices = false },
+            },
+            VotingType.Ranked => new VotingProcessQuestionRequest
+            {
+                Title = Lang(q.Title), Choices = choices, Type = "singlechoice",
+                TypeSetup = new QuestionTypeSetup { MinChoices = 1, MaxChoices = 1, UniqueChoices = false },
+                BallotProtocol = new BallotProtocol { MaxCount = n, MaxValue = n - 1, UniqueValues = true },
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(q.Kind)),
+        };
     }
 
     private static Dictionary<string, string> Lang(string text) => new() { ["default"] = text };
 
-    private static ProposalResponse ToResponse(Proposal p) => new(
-        p.Id, p.AssociationId, p.Title, p.Description,
-        JsonSerializer.Deserialize<List<string>>(p.ChoicesJson) ?? [],
-        p.VotingType,
-        p.Status.ToString(), p.VocdoniProcessId, p.VocdoniCensusId, p.VocdoniBundleId,
-        p.StartDate, p.EndDate, p.CreatedAt);
+    private static ProposalResponse ToResponse(Proposal p, IReadOnlyDictionary<string, VotingProcessQuestionResults>? results = null)
+    {
+        var questions = p.Questions.OrderBy(q => q.Order).Select(q =>
+        {
+            VotingProcessQuestionResults? qr = null;
+            if (results is not null && !string.IsNullOrEmpty(q.UpstreamId)) results.TryGetValue(q.UpstreamId, out qr);
+            return new QuestionResponse(
+                q.Id, q.Order, q.Title,
+                JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
+                q.Kind, q.UpstreamId, q.Status, qr?.VoteCount ?? 0, qr?.Results);
+        }).ToList();
+        return new ProposalResponse(
+            p.Id, p.AssociationId, p.Title, p.Description,
+            p.Status.ToString(), p.VocdoniProcessId, p.StartDate, p.EndDate, p.CreatedAt, questions);
+    }
 
     private async Task<(Association?, ActionResult?)> ResolveAsync(int associationId, CancellationToken ct)
     {

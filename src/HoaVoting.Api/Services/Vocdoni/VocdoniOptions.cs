@@ -4,8 +4,16 @@ public class VocdoniOptions
 {
     public const string Section = "Vocdoni";
 
-    /// <summary>Base URL of the Vocdoni SaaS backend, e.g. https://api-saas.vocdoni.net.</summary>
-    public string BaseUrl { get; set; } = "";
+    /// <summary>SaaS base URL the backend calls server-to-server, e.g. https://api-saas.vocdoni.net.</summary>
+    public string ServerUrl { get; set; } = "";
+
+    /// <summary>
+    /// Browser-facing SaaS base URL for the public voting page's client-side CSP/vote calls. Defaults
+    /// to <see cref="ServerUrl"/>; override when the browser reaches the SaaS at a different address
+    /// than the backend (local Docker: the backend uses host.docker.internal, the browser can't — use
+    /// localhost).
+    /// </summary>
+    public string BrowserUrl { get; set; } = "";
 
     /// <summary>
     /// Pre-provisioned API token (an integrator org's API key) sent as

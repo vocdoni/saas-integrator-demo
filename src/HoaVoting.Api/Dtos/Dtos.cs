@@ -21,14 +21,20 @@ public record AddHomeownerRequest(
 
 public record HomeownerResponse(string Id, string Name, string? Surname, string Email, string? MemberNumber, string? Weight);
 
+// A proposal is a multi-question voting process (saas-backend #571). Voters always auth by member
+// number (no 2FA); each question is its own on-chain election.
 public record CreateProposalRequest(
     string Title,
     string Description,
-    List<ProposalChoice> Choices,
     DateTimeOffset StartDate,
     DateTimeOffset EndDate,
-    // single (default) | multiple (approval) | ranked. Voters always auth by member number (no 2FA).
-    VotingType VotingType = VotingType.Single);
+    List<QuestionInput> Questions);
+
+public record QuestionInput(
+    string Title,
+    List<ProposalChoice> Choices,
+    // single (default) | multiple (approval) | ranked.
+    VotingType Kind = VotingType.Single);
 
 public record ProposalChoice(string Title);
 
@@ -37,42 +43,49 @@ public record ProposalResponse(
     int AssociationId,
     string Title,
     string Description,
-    List<string> Choices,
-    VotingType VotingType,
     string Status,
     string VocdoniProcessId,
-    string VocdoniCensusId,
-    string VocdoniBundleId,
     DateTimeOffset StartDate,
     DateTimeOffset EndDate,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    List<QuestionResponse> Questions);
 
-public record ProposalResultsResponse(
-    string ProcessId,
-    string? Status,
-    bool FinalResults,
+public record QuestionResponse(
+    int Id,
+    int Order,
+    string Title,
+    List<string> Choices,
+    VotingType Kind,
+    // On-chain election id (hex) + status, once the process is published.
+    string UpstreamId,
+    string Status,
+    // On-chain tally, best-effort (GET /processes/{id}/results). Results is the histogram matrix.
     int VoteCount,
-    List<List<string>>? Results,
-    // Published census size = eligible voters; the tally bars fill against this. Null if unavailable.
-    int? CensusSize);
+    List<List<string>>? Results);
 
-/// <summary>Public, read-only voting-page payload (no auth).</summary>
+/// <summary>Public, read-only voting-page payload (no auth). Casting is client-side per question.</summary>
 public record VotingInfoResponse(
     string ProcessId,
-    string BundleId,
-    // Vocdoni SaaS API base URL — the voting page casts ballots client-side via the integrator SDK,
-    // which talks straight to this API (CSP auth/sign/relay). Never the chain directly.
+    // Vocdoni SaaS API base URL + chain id — the voting page casts ballots client-side via the
+    // integrator SDK's crypto against this API (CSP auth/sign per question, relay POST /vote).
     string ApiUrl,
+    string ChainId,
     string Title,
     string Description,
-    List<string> Choices,
     DateTimeOffset StartDate,
     DateTimeOffset EndDate,
     string Status,
-    int? VoteCount,
-    string? OnchainStatus,
-    List<List<string>>? Results,
-    // Published census size = eligible voters; shown on the page and used to fill the result bars.
-    int? CensusSize,
-    // Ballot kind: single | multiple | ranked — drives the voting-page UI and result interpretation.
-    VotingType VotingType);
+    List<PublicQuestion> Questions);
+
+public record PublicQuestion(
+    int Id,
+    int Order,
+    string Title,
+    List<string> Choices,
+    VotingType Kind,
+    // The on-chain election id the voter signs against and relays to; empty until published.
+    string UpstreamId,
+    string Status,
+    // On-chain tally (best-effort), for the finished-state results. Results is the histogram matrix.
+    int VoteCount,
+    List<List<string>>? Results);

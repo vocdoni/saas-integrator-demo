@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace HoaVoting.Api.Controllers;
 
-/// <summary>Public, read-only voting-page data keyed by the 24-hex ProcessID (#551). No auth.</summary>
+/// <summary>Public, read-only voting-page data for a multi-question process (#571). No auth.</summary>
 [ApiController]
 [AllowAnonymous]
 [Route("api/processes")]
@@ -18,33 +18,37 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
     [HttpGet("{processId}")]
     public async Task<ActionResult<VotingInfoResponse>> Get(string processId, CancellationToken ct)
     {
-        var p = await db.Proposals.SingleOrDefaultAsync(x => x.VocdoniProcessId == processId, ct);
+        var p = await db.Proposals.Include(x => x.Questions)
+            .SingleOrDefaultAsync(x => x.VocdoniProcessId == processId, ct);
         if (p is null) return NotFound();
 
-        var choices = JsonSerializer.Deserialize<List<string>>(p.ChoicesJson) ?? [];
-
-        // Live on-chain status/tally is best-effort — the page still renders if Vocdoni is unreachable.
-        int? voteCount = null;
-        string? onchainStatus = null;
-        List<List<string>>? results = null;
+        // Live per-question status + tally, best-effort (the page still renders if unreachable).
+        var byUpstream = new Dictionary<string, VotingProcessQuestionResults>();
         try
         {
-            var r = await vocdoni.GetResultsAsync(processId, ct);
-            voteCount = r.VoteCount;
-            onchainStatus = r.Status;
-            results = r.Results;
+            var res = await vocdoni.GetVotingProcessResultsAsync(processId, ct);
+            foreach (var qr in res.Questions)
+                if (!string.IsNullOrEmpty(qr.UpstreamId)) byUpstream[qr.UpstreamId!] = qr;
         }
-        catch (VocdoniApiException) { /* leave nulls */ }
-        catch (HttpRequestException) { /* leave nulls */ }
+        catch (VocdoniApiException) { /* serve stored values */ }
+        catch (HttpRequestException) { }
 
-        // Census size (eligible voters) lives on the process detail — best-effort, like the tally.
-        int? censusSize = null;
-        try { censusSize = await vocdoni.GetCensusSizeAsync(processId, ct); }
-        catch (VocdoniApiException) { /* leave null */ }
-        catch (HttpRequestException) { /* leave null */ }
+        var opts = vocdoniOptions.Value;
+        // The page calls the SaaS API from the browser, so hand it the browser-reachable URL (BrowserUrl),
+        // which may differ from the backend's own ServerUrl (local Docker: host.docker.internal vs localhost).
+        var apiUrl = string.IsNullOrEmpty(opts.BrowserUrl) ? opts.ServerUrl : opts.BrowserUrl;
+        var questions = p.Questions.OrderBy(q => q.Order).Select(q =>
+        {
+            VotingProcessQuestionResults? qr = null;
+            if (!string.IsNullOrEmpty(q.UpstreamId)) byUpstream.TryGetValue(q.UpstreamId, out qr);
+            return new PublicQuestion(
+                q.Id, q.Order, q.Title,
+                JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
+                q.Kind, q.UpstreamId, qr?.Status ?? q.Status, qr?.VoteCount ?? 0, qr?.Results);
+        }).ToList();
 
         return new VotingInfoResponse(
-            p.VocdoniProcessId, p.VocdoniBundleId, vocdoniOptions.Value.BaseUrl, p.Title, p.Description, choices,
-            p.StartDate, p.EndDate, p.Status.ToString(), voteCount, onchainStatus, results, censusSize, p.VotingType);
+            p.VocdoniProcessId, apiUrl, p.ChainId, p.Title, p.Description,
+            p.StartDate, p.EndDate, p.Status.ToString(), questions);
     }
 }

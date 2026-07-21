@@ -795,6 +795,23 @@ code {
   border-color: rgba(91, 101, 113, 0.22);
 }
 
+/* Client-side "close requested, end tx pending" — pulses until the real status flips to Closed. */
+.s-closing {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-color: rgba(154, 106, 26, 0.22);
+}
+
+.s-closing::before {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
 /* ---- results: tally bars ------------------------------------------------- */
 .results {
   margin-top: 12px;
@@ -1076,6 +1093,74 @@ code {
 }
 .vote-type legend {
   padding: 0 4px;
+}
+
+/* Multi-question create form + list */
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.question-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px;
+  background: var(--paper-inset);
+}
+.qe-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.p-questions {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.p-question {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pq-title {
+  flex: 1;
+  color: var(--ink-2);
+}
+.pq-kind {
+  font-size: 11px;
+  text-transform: capitalize;
+  color: var(--ink-3);
+  background: var(--paper);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.p-question-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.p-question-block:first-child {
+  border-top: none;
+}
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.q-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .vote-soon {
