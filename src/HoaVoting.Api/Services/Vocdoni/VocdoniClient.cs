@@ -96,13 +96,10 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         await PollJobAsync(enqueued.JobId!, ct);
     }
 
-    /// <summary>Reads a process fully hydrated — after publish each question carries its on-chain upstreamId + status.</summary>
+    /// <summary>Reads a process fully hydrated — each question carries its on-chain upstreamId + status, and
+    /// (saas-backend #596) an inline tally once it reaches "results" status.</summary>
     public Task<VotingProcessResponse> GetVotingProcessAsync(string processId, CancellationToken ct = default) =>
         SendAsync<VotingProcessResponse>(HttpMethod.Get, $"/processes/{processId}", null, ct);
-
-    /// <summary>Reads per-question on-chain results (public; only once the process is published).</summary>
-    public Task<VotingProcessResultsResponse> GetVotingProcessResultsAsync(string processId, CancellationToken ct = default) =>
-        SendAsync<VotingProcessResultsResponse>(HttpMethod.Get, $"/processes/{processId}/results", null, ct);
 
     /// <summary>Changes question status (e.g. "ended"); a null/empty <paramref name="questionIds"/> targets all published questions.</summary>
     // ponytail: fire-and-forget — we enqueue the status change and return without waiting for the

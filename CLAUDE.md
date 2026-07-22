@@ -69,12 +69,16 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   **vocdoni-ballot-protocol** skill for the encoding.
 - **Async everything via jobs.** Publish, question-status change, vote relay, bulk member add return a
   `jobId`; the client polls `GET /jobs/{id}` (fail-fast on `failed`). Publish is idempotent (200).
-- **Status + tally reconcile.** `ProposalsController` List/Get + `VotingController` call
-  `GET /processes/{id}/results` (per-question live on-chain `status` + `voteCount` + `results` matrix),
-  refresh each question's `Status`, mark the proposal `Closed` when all questions ended, and pass the
-  results into the response (matched by `UpstreamId`). Tallies render via `web/src/tally.js`
-  `tallyCounts(results, kind)` + `QuestionResults.jsx` (single=`results[0]`, multiple=`results[i][1]`,
-  ranked=Borda `Σ results[i][v]·v`). The public page also derives finished via `isFinished`.
+- **Status + tally reconcile.** `ProposalsController` List/Get (`HydrateAsync`) + `VotingController`
+  read `GET /processes/{id}` (the process read carries per-question live on-chain `status` always, plus
+  an inline `results` tally — `voteCount` + `maxVoters` + `results` matrix — resolved only once a
+  question hits **`results`** status, saas-backend #596). They refresh each question's `Status`, mark
+  the proposal `Closed` when all questions ended, and pass the inline tallies into the response (matched
+  by `UpstreamId`). Tallies render via `web/src/tally.js` `tallyCounts(results, kind)` +
+  `QuestionResults.jsx` (single=`results[0]`, multiple=`results[i][1]`, ranked=Borda `Σ results[i][v]·v`;
+  `maxVoters` is the per-question turnout denominator). The public page also derives finished via
+  `isFinished`. (The separate `GET /processes/{id}/results` endpoint exists but is unused — its shape
+  dropped `status`, which we need every read.)
 - **Auth-only census.** Voters authenticate by **member number** (no 2FA); the process census is
   inline (`census: { authFields: ["memberNumber"], memberIds }`) — no separate census/group/publish.
 - **`chainId` comes from the process (#582).** The process read (`GET /processes/{id}`) carries the

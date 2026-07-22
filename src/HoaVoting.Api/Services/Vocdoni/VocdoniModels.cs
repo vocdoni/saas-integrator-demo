@@ -177,6 +177,19 @@ public sealed class VotingProcessQuestion
     public string? UpstreamId { get; set; }
     /// <summary>ready | paused | ended | canceled | results.</summary>
     public string? Status { get; set; }
+    /// <summary>Inline on-chain tally (saas-backend #596), resolved on read only when Status is "results".</summary>
+    public VocdoniQuestionResults? Results { get; set; }
+}
+
+/// <summary>One question's on-chain tally (saas-backend #596 db.QuestionResults).</summary>
+public sealed class VocdoniQuestionResults
+{
+    public int VoteCount { get; set; }
+    /// <summary>The question's own on-chain maxCensusSize (its eligibility subset) — a turnout denominator.</summary>
+    public int MaxVoters { get; set; }
+    public bool FinalResults { get; set; }
+    /// <summary>Raw tally matrix (strings, big-int safe): one row per ballot field, per-value counts.</summary>
+    public List<List<string>>? Results { get; set; }
 }
 
 public sealed class SetQuestionsStatusRequest
@@ -196,24 +209,6 @@ public sealed class VotingProcessValidateResponse
 {
     public bool Valid { get; set; }
     public List<string>? Errors { get; set; }
-}
-
-/// <summary>GET /processes/{id}/results — per-question on-chain tallies (once published).</summary>
-public sealed class VotingProcessResultsResponse
-{
-    public string? Id { get; set; }
-    public List<VotingProcessQuestionResults> Questions { get; set; } = new();
-}
-
-public sealed class VotingProcessQuestionResults
-{
-    public string? QuestionId { get; set; }
-    public string? UpstreamId { get; set; }
-    public string? Status { get; set; }
-    public int VoteCount { get; set; }
-    public bool FinalResults { get; set; }
-    /// <summary>Per-field, per-value histogram (strings, big-int safe) — same shape as the legacy results.</summary>
-    public List<List<string>>? Results { get; set; }
 }
 
 public sealed class EnqueuedResponse

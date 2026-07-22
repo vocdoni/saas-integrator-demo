@@ -120,34 +120,35 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         return Accepted();
     }
 
-    // Refresh each proposal's questions (live on-chain status + tally) from GET /processes/{id}/results,
-    // mark the proposal Closed once every question has ended (or its end date passed), and return the
-    // per-question results keyed by on-chain id for the response. Best-effort per proposal.
-    private async Task<Dictionary<int, Dictionary<string, VotingProcessQuestionResults>>> HydrateAsync(
+    // Refresh each proposal's questions from the process read GET /processes/{id} (saas-backend #596:
+    // per-question live status always, plus an inline tally once the question hits "results"), mark the
+    // proposal Closed once every question has ended (or its end date passed), and return each question's
+    // inline tally keyed by on-chain id for the response. Best-effort per proposal.
+    private async Task<Dictionary<int, Dictionary<string, VocdoniQuestionResults>>> HydrateAsync(
         IReadOnlyList<Proposal> proposals, CancellationToken ct)
     {
-        var map = new Dictionary<int, Dictionary<string, VotingProcessQuestionResults>>();
+        var map = new Dictionary<int, Dictionary<string, VocdoniQuestionResults>>();
         var changed = false;
         foreach (var p in proposals)
         {
-            var byUpstream = new Dictionary<string, VotingProcessQuestionResults>();
+            var byUpstream = new Dictionary<string, VotingProcessQuestion>();
             try
             {
-                var res = await vocdoni.GetVotingProcessResultsAsync(p.VocdoniProcessId, ct);
-                foreach (var qr in res.Questions)
-                    if (!string.IsNullOrEmpty(qr.UpstreamId)) byUpstream[qr.UpstreamId!] = qr;
+                var proc = await vocdoni.GetVotingProcessAsync(p.VocdoniProcessId, ct);
+                foreach (var q in proc.Questions)
+                    if (!string.IsNullOrEmpty(q.UpstreamId)) byUpstream[q.UpstreamId!] = q;
             }
             catch (VocdoniApiException) { /* not published yet / unreachable — serve stored values */ }
             catch (HttpRequestException) { }
-            map[p.Id] = byUpstream;
 
+            var results = new Dictionary<string, VocdoniQuestionResults>();
             foreach (var q in p.Questions)
-                if (!string.IsNullOrEmpty(q.UpstreamId) && byUpstream.TryGetValue(q.UpstreamId, out var qr)
-                    && !string.IsNullOrEmpty(qr.Status) && qr.Status != q.Status)
-                {
-                    q.Status = qr.Status!;
-                    changed = true;
-                }
+            {
+                if (string.IsNullOrEmpty(q.UpstreamId) || !byUpstream.TryGetValue(q.UpstreamId, out var pq)) continue;
+                if (!string.IsNullOrEmpty(pq.Status) && pq.Status != q.Status) { q.Status = pq.Status!; changed = true; }
+                if (pq.Results is not null) results[q.UpstreamId] = pq.Results;
+            }
+            map[p.Id] = results;
 
             if (p.Status != ProposalStatus.Closed)
             {
@@ -191,16 +192,16 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
 
     private static Dictionary<string, string> Lang(string text) => new() { ["default"] = text };
 
-    private static ProposalResponse ToResponse(Proposal p, IReadOnlyDictionary<string, VotingProcessQuestionResults>? results = null)
+    private static ProposalResponse ToResponse(Proposal p, IReadOnlyDictionary<string, VocdoniQuestionResults>? results = null)
     {
         var questions = p.Questions.OrderBy(q => q.Order).Select(q =>
         {
-            VotingProcessQuestionResults? qr = null;
+            VocdoniQuestionResults? qr = null;
             if (results is not null && !string.IsNullOrEmpty(q.UpstreamId)) results.TryGetValue(q.UpstreamId, out qr);
             return new QuestionResponse(
                 q.Id, q.Order, q.Title,
                 JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
-                q.Kind, q.UpstreamId, q.Status, qr?.VoteCount ?? 0, qr?.Results);
+                q.Kind, q.UpstreamId, q.Status, qr?.VoteCount ?? 0, qr?.MaxVoters ?? 0, qr?.Results);
         }).ToList();
         return new ProposalResponse(
             p.Id, p.AssociationId, p.Title, p.Description,

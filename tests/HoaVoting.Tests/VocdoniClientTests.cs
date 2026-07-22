@@ -142,7 +142,7 @@ public class VocdoniClientTests
     public async Task SetQuestionsStatus_puts_and_returns_without_polling()
     {
         // Fire-and-forget: enqueue the end (202) and return. The real status is reconciled from
-        // /results on the next read, so we must NOT poll /jobs here.
+        // the process read on the next hydrate, so we must NOT poll /jobs here.
         var handler = new SequenceHandler(
             (HttpStatusCode.Accepted, """{"jobId":"j1"}"""));
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
