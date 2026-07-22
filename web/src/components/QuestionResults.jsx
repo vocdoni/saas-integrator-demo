@@ -1,7 +1,7 @@
 import { tallyCounts } from '../tally.js'
 
-// One question's on-chain tally. `q` = { title, choices, kind, voteCount, results }. Bars fill against
-// the leading value (single/multiple = the top choice's count; ranked = the top Borda score).
+// One question's on-chain tally. `q` = { title, choices, kind, voteCount, maxVoters, results }. Bars
+// fill against the leading value (single/multiple = the top choice's count; ranked = the top Borda score).
 export default function QuestionResults({ q }) {
   const nums = tallyCounts(q.results, q.kind)
   const max = nums ? Math.max(...nums, 0) : 0
@@ -9,6 +9,7 @@ export default function QuestionResults({ q }) {
     <div className="q-results">
       <div className="results-meta">
         <strong>{q.title}</strong> · <span className="num">{q.voteCount ?? 0}</span> vote{q.voteCount === 1 ? '' : 's'}
+        {q.maxVoters > 0 && <span className="muted"> of {q.maxVoters}</span>}
       </div>
       {!nums || max === 0 ? (
         <div className="vote-soon">No votes yet.</div>

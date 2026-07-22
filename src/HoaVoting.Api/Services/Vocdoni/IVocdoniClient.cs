@@ -19,11 +19,9 @@ public interface IVocdoniClient
     /// <summary>Publishes every question of a process on-chain (async batch) and waits for the job.</summary>
     Task PublishVotingProcessAsync(string processId, CancellationToken ct = default);
 
-    /// <summary>Reads a process fully hydrated — after publish each question carries its on-chain upstreamId + status.</summary>
+    /// <summary>Reads a process fully hydrated — each question carries its on-chain upstreamId + status, and
+    /// (saas-backend #596) an inline tally once it reaches "results" status.</summary>
     Task<VotingProcessResponse> GetVotingProcessAsync(string processId, CancellationToken ct = default);
-
-    /// <summary>Reads per-question on-chain results (public; only once the process is published).</summary>
-    Task<VotingProcessResultsResponse> GetVotingProcessResultsAsync(string processId, CancellationToken ct = default);
 
     /// <summary>Changes question status (e.g. "ended"); null/empty questionIds ⇒ all published questions.</summary>
     Task SetQuestionsStatusAsync(string processId, string status, List<string>? questionIds = null, CancellationToken ct = default);

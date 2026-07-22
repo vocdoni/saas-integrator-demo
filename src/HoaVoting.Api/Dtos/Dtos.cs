@@ -59,8 +59,10 @@ public record QuestionResponse(
     // On-chain election id (hex) + status, once the process is published.
     string UpstreamId,
     string Status,
-    // On-chain tally, best-effort (GET /processes/{id}/results). Results is the histogram matrix.
+    // On-chain tally, best-effort (inline on GET /processes/{id}, saas-backend #596). Results is the
+    // histogram matrix; MaxVoters is this question's own census size (turnout denominator).
     int VoteCount,
+    int MaxVoters,
     List<List<string>>? Results);
 
 /// <summary>Public, read-only voting-page payload (no auth). Casting is client-side per question.</summary>
@@ -86,6 +88,8 @@ public record PublicQuestion(
     // The on-chain election id the voter signs against and relays to; empty until published.
     string UpstreamId,
     string Status,
-    // On-chain tally (best-effort), for the finished-state results. Results is the histogram matrix.
+    // On-chain tally (best-effort, inline on GET /processes/{id}, saas-backend #596), for the finished
+    // state. Results is the histogram matrix; MaxVoters is this question's census size (turnout denom).
     int VoteCount,
+    int MaxVoters,
     List<List<string>>? Results);

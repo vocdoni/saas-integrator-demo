@@ -149,7 +149,8 @@ else
 fi
 
 # --- 9. read + close (only if proposal created) ----------------------------
-# Voting is client-side (per-question CSP sign + relay); the SaaS exposes no results endpoint in #571.
+# Voting is client-side (per-question CSP sign + relay); per-question tallies come inline on the
+# process read once a question reaches "results" status (saas-backend #596).
 if [ -n "${PROP_ID:-}" ]; then
   step "Read proposal (questions + on-chain status)"
   req GET "/api/associations/$ASSOC_ID/proposals/$PROP_ID" "" "$OWNER_TOKEN"
