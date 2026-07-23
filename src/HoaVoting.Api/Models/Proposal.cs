@@ -53,6 +53,12 @@ public class ProposalQuestion
     /// <summary>The question's choice titles, JSON-serialized.</summary>
     public string ChoicesJson { get; set; } = "[]";
 
+    /// <summary>
+    /// Index of the "open" choice that accepts a free-text voter memo (saas-backend #577), or -1 if
+    /// none. Single-choice questions only; at most one per question.
+    /// </summary>
+    public int OpenChoiceIndex { get; set; } = -1;
+
     /// <summary>Ballot kind for this question: single choice, multiple (approval), or ranked.</summary>
     public VotingType Kind { get; set; }
 

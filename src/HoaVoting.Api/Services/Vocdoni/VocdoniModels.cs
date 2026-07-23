@@ -115,6 +115,8 @@ public sealed class VocdoniChoice
 {
     public Dictionary<string, string> Title { get; set; } = new();
     public uint Value { get; set; }
+    /// <summary>Marks the one choice that accepts a free-text voter memo (saas-backend #577). Max one per question.</summary>
+    public bool OpenValue { get; set; }
 }
 
 public sealed class QuestionTypeSetup
@@ -190,6 +192,12 @@ public sealed class VocdoniQuestionResults
     public bool FinalResults { get; set; }
     /// <summary>Raw tally matrix (strings, big-int safe): one row per ballot field, per-value counts.</summary>
     public List<List<string>>? Results { get; set; }
+    /// <summary>
+    /// Free-text voter memos cast alongside the question's open-value choice (saas-backend #577).
+    /// Present only for a manager/admin caller (the process read carries them inline once RESULTS);
+    /// never surfaced to the public voting page.
+    /// </summary>
+    public List<string>? Memos { get; set; }
 }
 
 public sealed class SetQuestionsStatusRequest

@@ -27,6 +27,14 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         if (error is not null) return error;
         if (req.Questions is null || req.Questions.Count == 0) return BadRequest("A proposal needs at least one question.");
         if (req.Questions.Any(q => q.Choices.Count < 2)) return BadRequest("Each question needs at least two choices.");
+        // An open "Other" choice (free-text voter memo, #577) is single-choice-only, at most one per question.
+        foreach (var (q, qi) in req.Questions.Select((q, i) => (q, i)))
+        {
+            var opens = q.Choices.Count(c => c.Open);
+            if (opens > 1) return BadRequest($"Question {qi + 1}: at most one choice can be an open 'Other' answer.");
+            if (opens == 1 && q.Kind != VotingType.Single)
+                return BadRequest($"Question {qi + 1}: an open 'Other' choice is only supported on single-choice questions.");
+        }
 
         var org = assoc!.VocdoniOrgAddress;
         var members = await vocdoni.ListMembersAsync(org, ct);
@@ -66,6 +74,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
                 Order = i,
                 Title = q.Title,
                 ChoicesJson = JsonSerializer.Serialize(q.Choices.Select(c => c.Title)),
+                OpenChoiceIndex = q.Choices.FindIndex(c => c.Open),
                 Kind = q.Kind,
                 UpstreamId = published.Questions.ElementAtOrDefault(i)?.UpstreamId ?? "",
                 Status = published.Questions.ElementAtOrDefault(i)?.Status ?? "",
@@ -167,7 +176,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
     private static VotingProcessQuestionRequest ToQuestionRequest(QuestionInput q)
     {
         var n = q.Choices.Count;
-        var choices = q.Choices.Select((c, i) => new VocdoniChoice { Title = Lang(c.Title), Value = (uint)i }).ToList();
+        var choices = q.Choices.Select((c, i) => new VocdoniChoice { Title = Lang(c.Title), Value = (uint)i, OpenValue = c.Open }).ToList();
         return q.Kind switch
         {
             VotingType.Single => new VotingProcessQuestionRequest
@@ -201,7 +210,8 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             return new QuestionResponse(
                 q.Id, q.Order, q.Title,
                 JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
-                q.Kind, q.UpstreamId, q.Status, qr?.VoteCount ?? 0, qr?.MaxVoters ?? 0, qr?.Results);
+                q.Kind, q.OpenChoiceIndex, q.UpstreamId, q.Status,
+                qr?.VoteCount ?? 0, qr?.MaxVoters ?? 0, qr?.Results, qr?.Memos);
         }).ToList();
         return new ProposalResponse(
             p.Id, p.AssociationId, p.Title, p.Description,
