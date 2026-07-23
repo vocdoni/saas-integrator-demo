@@ -56,6 +56,14 @@ export default function VotingPage({ processId }) {
     if (info) setAnswers(Object.fromEntries(info.questions.map((q) => [q.id, blankAnswer(q)])))
   }, [info])
 
+  // After casting, poll the live tally so new votes (incl. the block delay on the voter's own vote)
+  // show up in real time. Stops once the process is finished (final) or the page unmounts.
+  useEffect(() => {
+    if (!cast || (info && isFinished(info))) return
+    const id = setInterval(() => reload().catch(() => {}), 5000)
+    return () => clearInterval(id)
+  }, [cast, info])
+
   const setAns = (qid, patch) => setAnswers((a) => ({ ...a, [qid]: { ...a[qid], ...patch } }))
   const toggle = (q, i) => {
     const cur = answers[q.id]?.selected ?? []
@@ -135,12 +143,18 @@ export default function VotingPage({ processId }) {
       </div>
 
       {cast ? (
-        <div className="vote-done">
-          <strong>Your vote{cast.length === 1 ? '' : 's'} {cast.length === 1 ? 'was' : 'were'} cast.</strong>
-          {cast.map((c) => (
-            <p key={c.upstreamId} className="mono small muted">Nullifier {c.voteID}</p>
-          ))}
-        </div>
+        <>
+          <div className="vote-done">
+            <strong>Your vote{cast.length === 1 ? '' : 's'} {cast.length === 1 ? 'was' : 'were'} cast.</strong>
+            {cast.map((c) => (
+              <p key={c.upstreamId} className="mono small muted">Nullifier {c.voteID}</p>
+            ))}
+          </div>
+          <div className="results-list">
+            {!done && <span className="eyebrow">Live results</span>}
+            {info.questions.map((q) => <QuestionResults key={q.id} q={q} />)}
+          </div>
+        </>
       ) : done ? (
         <div className="results-list">
           {info.questions.map((q) => <QuestionResults key={q.id} q={q} />)}
