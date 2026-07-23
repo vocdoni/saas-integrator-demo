@@ -11,7 +11,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
   const client = new VocdoniApiClient({ apiUrl })
 
   // 1. Auth once per process. Auth-only census ⇒ the step-0 token is already verified (no OTP).
-  const { authToken } = await cspPost(apiUrl, `/processes/${processId}/auth/0`, { memberNumber })
+  const { authToken } = await client.processes.authStep0(processId, { memberNumber })
   if (!authToken) throw new Error('Authentication failed — check your member number.')
 
   // 2. Per answered question: CSP-sign a fresh ephemeral identity for that election, then build + relay.
@@ -19,7 +19,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
   const results = []
   for (const { upstreamId, choices } of answers) {
     const signer = new EphemeralSigner()
-    const { signature, weight } = await cspPost(apiUrl, `/processes/${processId}/sign`, {
+    const { signature, weight } = await client.processes.sign(processId, {
       authToken,
       payload: signer.address,
       electionId: upstreamId, // the target question's on-chain election id
@@ -37,16 +37,4 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
     results.push({ upstreamId, voteID: job.result?.voteID ?? jobId })
   }
   return results
-}
-
-// The #571 CSP voter endpoints (/processes/{id}/auth|check|sign) aren't in @vocdoni/api-client, so
-// call them with raw fetch. Public endpoints — no auth header.
-async function cspPost(apiUrl, path, body) {
-  const res = await fetch(`${apiUrl.replace(/\/$/, '')}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) throw new Error(`${path} → HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  return res.json()
 }
