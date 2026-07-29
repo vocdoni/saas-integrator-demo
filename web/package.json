@@ -6,16 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@vocdoni/api-client": "^1.0.0",
-    "@vocdoni/api-voting": "^0.1.0",
+    "@vocdoni/api-client": "^1.1.0",
+    "@vocdoni/api-voting": "^0.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "vitest": "^3.0.0"
   }
 }

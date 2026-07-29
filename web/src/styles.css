@@ -1185,6 +1185,45 @@ code {
   padding: 14px;
 }
 
+/* A batch relays as a unit but settles per vote, so some questions can fail on their own. */
+.vote-done.partial {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.vote-outcome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  justify-content: space-between;
+  font-size: 13px;
+  padding-top: 6px;
+}
+
+.vote-outcome + .vote-outcome {
+  border-top: 1px solid var(--border);
+}
+
+.vo-title {
+  color: var(--ink-2);
+}
+
+.vo-ok,
+.vo-fail {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.vo-ok {
+  color: var(--ink-3);
+}
+
+.vo-fail {
+  color: var(--danger);
+}
+
 /* Full hex ids (nullifier, process ref) must wrap inside the overflow-hidden card, not clip. */
 .vote-body .mono {
   overflow-wrap: anywhere;

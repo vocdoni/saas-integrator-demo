@@ -127,6 +127,16 @@ export default function VotingPage({ processId }) {
   const statusText = done ? 'Closed' : info.status || ''
   const allAnswered = info.questions.every((q) => isAnswered(q, answers[q.id]))
 
+  // The batch is relayed all or nothing, but each vote settles on chain on its own — so a job can
+  // come back with some questions cast and some not. Report that split rather than implying success.
+  const okCount = cast?.filter((o) => o.ok).length ?? 0
+  const allCast = !!cast && okCount === cast.length
+  const castHeading = allCast
+    ? `Your vote${cast.length === 1 ? ' was' : 's were'} cast.`
+    : okCount === 0
+      ? 'Your votes could not be cast.'
+      : `Only ${okCount} of ${cast.length} votes were cast.`
+
   return shell(
     <>
       <div className="vote-eyebrow">
@@ -144,11 +154,25 @@ export default function VotingPage({ processId }) {
 
       {cast ? (
         <>
-          <div className="vote-done">
-            <strong>Your vote{cast.length === 1 ? '' : 's'} {cast.length === 1 ? 'was' : 'were'} cast.</strong>
-            {cast.map((c) => (
-              <p key={c.upstreamId} className="mono small muted">Nullifier {c.voteID}</p>
-            ))}
+          <div className={allCast ? 'vote-done' : 'vote-done partial'}>
+            <strong>{castHeading}</strong>
+            {cast.map((o) => {
+              const q = info.questions.find((x) => x.upstreamId === o.upstreamId)
+              return (
+                <div key={o.upstreamId} className="vote-outcome">
+                  <span className="vo-title">{q?.title ?? o.upstreamId}</span>
+                  {o.ok ? (
+                    <span className="vo-ok">
+                      <b aria-hidden="true">✓</b> cast <span className="mono small">{o.voteID}</span>
+                    </span>
+                  ) : (
+                    <span className="vo-fail">
+                      <b aria-hidden="true">✗</b> not cast — {o.error}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
           </div>
           <div className="results-list">
             {!done && <span className="eyebrow">Live results</span>}

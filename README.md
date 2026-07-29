@@ -41,9 +41,9 @@ integrator org.
 - **In scope:** associations, owners, homeowners/census, proposals (create/close), results, and
   **vote casting** — the web app casts ballots client-side **through the Vocdoni SaaS API** via
   [`@vocdoni/integrator-sdk`](https://github.com/vocdoni/integrator-sdk) (no direct Vochain calls).
-- **The backend never builds or signs ballots.** The Vocdoni `/vote` endpoint only *relays an
-  already-signed Vochain transaction*; ballot encoding + signing is client-side crypto, done in the
-  voter's browser by the integrator SDK. Homeowners authenticate via Vocdoni's CSP/bundle flow.
+- **The backend never builds or signs ballots.** The Vocdoni `/votes` endpoint only *relays
+  already-signed Vochain transactions*; ballot encoding + signing is client-side crypto, done in the
+  voter's browser by the integrator SDK. Homeowners authenticate via Vocdoni's CSP flow.
 
 ## Identity
 
@@ -115,8 +115,9 @@ browser stays same-origin (no CORS). `docker compose up --build` brings up both 
   app.vocdoni.io's `/processes/:id`). It shows the ballot and lets a homeowner **cast a vote**:
   authenticate by member number, then pick one choice (single), several (multiple), or **drag to
   rank** the options (ranked), and submit. Casting runs entirely client-side against the SaaS API via
-  `@vocdoni/integrator-sdk` (see `web/src/voting.js`) — CSP auth → CSP sign → relay `POST /vote` →
-  poll for the vote nullifier. Page data comes from `GET /api/processes/{processId}`.
+  `@vocdoni/integrator-sdk` (see `web/src/voting.js`) — CSP auth → CSP sign + build one envelope per
+  question → relay the whole ballot in **one batch** (`POST /votes`) → poll the single job for the
+  per-question outcomes. Page data comes from `GET /api/processes/{processId}`.
 
 | Service | URL | Purpose |
 |---------|-----|---------|
@@ -184,10 +185,11 @@ from the group. Note: each `Member Number` must be **unique** (the voting creden
 
 ## Implementation Notes
 
-- **Async publish:** publish and status-change return `202 + jobId`; `PublishProcessAsync` /
-  `SetProcessStatusAsync` poll `GET /jobs/{jobId}` until the job completes (failing fast on a failed
-  job). Publish is idempotent: an already-published process returns `200` directly. Marked
-  `ponytail:` — for production, move the poll to a background worker.
+- **Async publish:** publish and status-change return `202 + jobId`. `PublishVotingProcessAsync`
+  polls `GET /jobs/{jobId}` until the job completes (failing fast on a failed job); publish is
+  idempotent, so an already-published process returns `200` directly. `SetQuestionsStatusAsync`
+  deliberately does **not** poll — closing a proposal is fire-and-forget, and the next process read
+  reconciles the real status. Marked `ponytail:` — for production, move the poll to a background worker.
 - **Integrator quota:** The free tier allows **1 managed organization**. Multiple associations
   require additional quota or a new integrator account. Deleting an association now frees the slot
   (`DELETE /integrator/organizations/{addr}` rolls back the integrator's usage counters).
@@ -198,12 +200,27 @@ from the group. Note: each `Member Number` must be **unique** (the voting creden
 - **Census reuse:** multiple processes can target the same published census (see `create-process.sh`).
 - **Client-side voting:** the web app casts ballots in the browser via `@vocdoni/integrator-sdk`
   (`@vocdoni/api-client` + `@vocdoni/api-voting`), which talk **only** to the SaaS API. The flow lives
-  in `web/src/voting.js` (`castVote`): bundle CSP auth (member number) → CSP sign over an ephemeral
-  key → relay `POST /vote` → poll the job for the nullifier. The backend only exposes the SaaS API
-  base URL to the page (`VotingInfoResponse.apiUrl`); it never builds or signs ballots.
-- **Turnout / census size:** result bars fill against the **eligible voter count** (the published
-  census size), read from `GET /process/{id}` (`census.size`) and surfaced as `censusSize` on the
-  results + public voting payloads. The page shows "N eligible" alongside the vote count.
+  in `web/src/voting.js` (`castProcessVotes`): CSP auth **once** per process (member number) → per
+  question, CSP-sign an ephemeral key and build the signed envelope → relay every envelope in one
+  batch → poll the single job. The backend only exposes the SaaS API base URL and `chainId` to the
+  page (`VotingInfoResponse.apiUrl` / `.chainId`); it never builds, signs, or relays ballots.
+- **Batch vote relay (saas-backend #610):** a proposal is a multi-question process and every question
+  is its own on-chain election, so a ballot is N vote transactions. They go out together via
+  `POST /votes`, which the backend validates and enqueues **all or nothing** — a rejected batch relays
+  nothing, so the voter can fix and retry without being half-voted. (Relaying one `POST /vote` per
+  question left exactly that window: an early question on chain, a later one failed, no rollback.)
+  The call returns **one** `jobId` for the whole batch; `GET /jobs/{jobId}` reports `result.votes[]`,
+  one entry per envelope **in request order**, each with `processId`/`nullifier` (readable while
+  pending) plus `voteID` once mined or `error` if that vote was rejected. At most 100 votes per batch,
+  which a process caps at anyway — no chunking needed.
+- **Partial failure is representable.** The batch is atomic on *submission*, not on *settlement*:
+  each envelope is queued separately, so one vote can fail on chain while its siblings land. Such a
+  job ends `failed`, and `jobs.waitFor()` throws `JobFailedError` — but the failed job still carries
+  the per-vote truth, so `voting.js` catches it and reads `e.job.result.votes` rather than reporting a
+  blanket failure. The voting page renders one ✓/✗ row per question.
+- **Turnout / census size:** result bars fill against the **eligible voter count**, read per question
+  as `maxVoters` from the inline tally on `GET /processes/{id}` (saas-backend #596) and surfaced on
+  the results + public voting payloads. The page shows "N eligible" alongside the vote count.
 - **Voting types** (`votingType`): the owner picks one per proposal, mapped to the Vocdoni `voteType`:
   - **single** — `{maxCount:1, maxValue:N-1}`; ballot `[chosenIndex]`; results `results[0]` are
     per-choice counts.
@@ -240,18 +257,23 @@ All endpoints except `/api/auth/login` require a valid JWT bearer token.
 - `DELETE /api/associations/{id}/homeowners/{memberId}` — remove member
 
 **Proposals (admin or association owner):**
-- `POST /api/associations/{id}/proposals` — create (group → census → group-publish → process →
-  publish → **bundle**). The published process is wrapped in a new process bundle (stored as
-  `vocdoniBundleId`) for the CSP voting flow. Body: `title`, `description`, `choices[]`,
-  `startDate`, `endDate`, `votingType` (`single` (default) | `multiple` | `ranked`). Voters always
-  authenticate by member number (no 2FA).
+- `POST /api/associations/{id}/proposals` — create a **multi-question voting process** in one call
+  (`POST /processes` with the census inline over the homeowners → `POST /processes/{id}/publish`,
+  polled → read back to capture each question's on-chain `upstreamId`, `status` and the `chainId`).
+  There is no group/census/bundle dance. Body: `title`, `description`, `startDate`, `endDate`, and
+  `questions[]`, each `{ title, choices[], kind }` with `kind` = `single` (default) | `multiple` |
+  `ranked`. Voters always authenticate by member number (no 2FA).
 - `GET /api/associations/{id}/proposals` — list
 - `GET /api/associations/{id}/proposals/{pid}` — get one
-- `POST /api/associations/{id}/proposals/{pid}/close` — end voting
-- `GET /api/associations/{id}/proposals/{pid}/results` — read tally
+- `POST /api/associations/{id}/proposals/{pid}/close` — end voting (all questions)
+
+  List and get both hydrate from `GET /processes/{id}`: they refresh each question's live status,
+  mark the proposal closed once every question has ended, and inline the per-question tally — so
+  there is no separate results endpoint.
 
 **Public (no auth):**
 - `GET /api/processes/{processId}` — voting-page data for the public `/processes/{processId}` page:
-  title, description, choices, dates, status, `votingType`, and (best-effort) on-chain
-  `voteCount`, `results`, and `censusSize`. Also returns `bundleId` and `apiUrl` (the SaaS API base
-  URL) so the page can cast votes client-side via the integrator SDK.
+  title, description, dates, status, and one entry per question (`title`, `choices[]`, `kind`,
+  `upstreamId`, `status`, and best-effort on-chain `voteCount`, `maxVoters`, `results`). Also returns
+  `apiUrl` (the SaaS API base URL) and `chainId` — the two things the page cannot derive — so it can
+  sign and batch-relay votes client-side via the integrator SDK.
