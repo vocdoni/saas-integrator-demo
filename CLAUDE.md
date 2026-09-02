@@ -32,6 +32,7 @@ dotnet test                         # 11 tests. No local .NET? run in a containe
   docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test
 dotnet test --filter <TestName>     # single test
 cd web && npm install && npm run dev # SPA hot reload :5173 (Vite proxies /api → :5095; needs api up)
+cd web && npm test                  # vitest — covers voting.js (batch relay + partial failure)
 cd web && npm run build             # production bundle (also what the web image builds)
 ./e2e.sh                            # full live flow; VTYPE=single|multiple|ranked; needs .env creds
 ```
@@ -43,10 +44,12 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
             dotnet ef migrations add <Name>'
 ```
 
-> **This branch targets the multi-question `/processes` API (saas-backend #571, unmerged).** A
-> proposal is a **voting process container** with **N questions**, each its own on-chain election.
-> The legacy singular `/process` + `/process/bundle` flow was **removed**. #571 is deployed nowhere
-> yet — run a local saas-backend on the `feat/processes-api` branch and point `Vocdoni:ServerUrl` at it.
+> **This app targets the multi-question `/processes` API (saas-backend #571, merged).** A proposal is
+> a **voting process container** with **N questions**, each its own on-chain election. The legacy
+> singular `/process` + `/process/bundle` flow was **removed**. `Vocdoni:ServerUrl` defaults to
+> `https://saas-api-dev.vocdoni.net` (`.env.example` instead points at a local backend on :8080), so a
+> hosted environment may lag a freshly merged backend change — when a call 404s, first establish which
+> backend you are actually hitting.
 
 ## Big picture (read multiple files to grasp)
 
@@ -55,12 +58,16 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   authors the whole process (`POST /processes`, census inline over the homeowners), publishes it as
   one async **batch** (`POST /processes/{id}/publish` → poll `/jobs/{id}`), then reads it back
   (`GET /processes/{id}`) to capture each question's on-chain `UpstreamId` + `Status`.
-- **Voting is client-side and per question; the backend never casts or signs.** `web/src/voting.js`
-  `castProcessVotes()` authenticates **once** per process (`POST /processes/{id}/auth/0`), then for
-  each answered question CSP-signs (`POST /processes/{id}/sign` with that question's `upstreamId`) and
-  relays one vote (`POST /vote`) — reusing `@vocdoni/api-voting`'s crypto (`EphemeralSigner`,
-  `VotingClient`). The `/processes/*` CSP endpoints aren't in `@vocdoni/api-client`, so they're raw
-  `fetch`. Bridge to the page: `VotingInfoResponse.ApiUrl` + `ChainId`.
+- **Voting is client-side and batched; the backend never casts or signs.** `web/src/voting.js`
+  `castProcessVotes()` authenticates **once** per process (`client.processes.authStep0`), then for
+  each answered question CSP-signs (`client.processes.sign` with that question's `upstreamId`) and
+  builds the signed envelope locally (`@vocdoni/api-voting`'s `EphemeralSigner` +
+  `buildVoteTransaction`). All envelopes then go out in **one** `client.elections.voteBatch()` call
+  (`POST /votes`, saas-backend #610) → **one** job. The batch is accepted or rejected as a unit, which
+  is the point: relaying per question could leave a ballot half-voted. Per-vote outcomes come back
+  index-aligned in `result.votes[]`, and because a job fails if *any* envelope failed, the
+  `jobs.waitFor()` call catches `JobFailedError` to read the outcomes off the failed job rather than
+  reporting blanket failure. Bridge to the page: `VotingInfoResponse.ApiUrl` + `ChainId`.
 - **Voting kinds are a cross-cut across four places.** `VotingType` (`single|multiple|ranked`,
   `Models/VotingType.cs`, JSON as a camelCase string via `JsonStringEnumConverter` in `Program.cs`) →
   a #571 question in `ProposalsController.ToQuestionRequest` (single=`singlechoice`,

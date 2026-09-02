@@ -75,7 +75,7 @@ public record QuestionResponse(
 public record VotingInfoResponse(
     string ProcessId,
     // Vocdoni SaaS API base URL + chain id — the voting page casts ballots client-side via the
-    // integrator SDK's crypto against this API (CSP auth/sign per question, relay POST /vote).
+    // integrator SDK's crypto against this API (CSP auth/sign per question, then one batch POST /votes).
     string ApiUrl,
     string ChainId,
     string Title,
