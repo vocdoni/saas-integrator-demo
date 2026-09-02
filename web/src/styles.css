@@ -1163,6 +1163,29 @@ code {
   gap: 8px;
 }
 
+/* Voter free-text input on the open "Other" choice (#577). */
+.memo-input {
+  margin-top: 10px;
+  width: 100%;
+}
+
+/* Admin: collected free-text answers (memos) under a question's results (#577). */
+.memos {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.memos ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
 .vote-soon {
   display: flex;
   align-items: center;

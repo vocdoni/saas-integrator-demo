@@ -26,7 +26,12 @@ function buildChoices(q, ans) {
 }
 
 const isAnswered = (q, ans) => (q.kind === 'ranked' ? true : (ans?.selected?.length ?? 0) > 0)
-const blankAnswer = (q) => ({ selected: [], order: q.choices.map((_, i) => i) })
+const blankAnswer = (q) => ({ selected: [], order: q.choices.map((_, i) => i), memo: '' })
+
+// Did the voter pick the question's open "Other" choice (single-choice only, #577)?
+const openSelected = (q, ans) => q.kind === 'single' && q.openChoiceIndex >= 0 && ans?.selected?.[0] === q.openChoiceIndex
+// The memo is required once "Other" is picked.
+const memoOk = (q, ans) => !openSelected(q, ans) || (ans?.memo?.trim().length ?? 0) > 0
 
 export default function VotingPage({ processId }) {
   const [info, setInfo] = useState(null)
@@ -93,7 +98,11 @@ export default function VotingPage({ processId }) {
     try {
       const payload = info.questions
         .filter((q) => q.upstreamId && isAnswered(q, answers[q.id]))
-        .map((q) => ({ upstreamId: q.upstreamId, choices: buildChoices(q, answers[q.id]) }))
+        .map((q) => ({
+          upstreamId: q.upstreamId,
+          choices: buildChoices(q, answers[q.id]),
+          ...(openSelected(q, answers[q.id]) ? { memo: answers[q.id].memo.trim() } : {}),
+        }))
       if (payload.length === 0) throw new Error('Answer at least one question.')
       const results = await castProcessVotes({
         apiUrl: info.apiUrl,
@@ -125,7 +134,7 @@ export default function VotingPage({ processId }) {
 
   const done = isFinished(info)
   const statusText = done ? 'Closed' : info.status || ''
-  const allAnswered = info.questions.every((q) => isAnswered(q, answers[q.id]))
+  const allAnswered = info.questions.every((q) => isAnswered(q, answers[q.id]) && memoOk(q, answers[q.id]))
 
   return shell(
     <>
@@ -169,6 +178,7 @@ export default function VotingPage({ processId }) {
               onToggle={(i) => toggle(q, i)}
               onMove={(pos, dir) => moveRank(q.id, pos, dir)}
               onDrop={(from, pos) => dropRank(q.id, from, pos)}
+              onMemo={(v) => setAns(q.id, { memo: v })}
             />
           ))}
 
@@ -195,7 +205,7 @@ export default function VotingPage({ processId }) {
 }
 
 // One question's ballot: radios (single), checkboxes (multiple), or a drag-to-rank list (ranked).
-function QuestionBallot({ q, ans, onToggle, onMove, onDrop }) {
+function QuestionBallot({ q, ans, onToggle, onMove, onDrop, onMemo }) {
   const [dragIndex, setDragIndex] = useState(null)
 
   if (q.kind === 'ranked') {
@@ -229,6 +239,8 @@ function QuestionBallot({ q, ans, onToggle, onMove, onDrop }) {
   }
 
   const multiple = q.kind === 'multiple'
+  // The open "Other" choice (single-choice only, #577): show a required free-text box when it's picked.
+  const openPicked = q.kind === 'single' && q.openChoiceIndex >= 0 && ans.selected[0] === q.openChoiceIndex
   return (
     <fieldset className="vote-choices">
       <legend className="eyebrow">{q.title}{multiple ? ' (select one or more)' : ''}</legend>
@@ -243,6 +255,16 @@ function QuestionBallot({ q, ans, onToggle, onMove, onDrop }) {
           <span>{c}</span>
         </label>
       ))}
+      {openPicked && (
+        <input
+          className="memo-input"
+          value={ans.memo}
+          onChange={(e) => onMemo(e.target.value)}
+          placeholder="Your answer (required)"
+          maxLength={256}
+          required
+        />
+      )}
     </fieldset>
   )
 }

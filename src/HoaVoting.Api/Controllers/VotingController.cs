@@ -42,10 +42,13 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
             VotingProcessQuestion? pq = null;
             if (!string.IsNullOrEmpty(q.UpstreamId)) byUpstream.TryGetValue(q.UpstreamId, out pq);
             var qr = pq?.Results;
+            // Note: qr may carry manager-only Memos (our backend reads as org manager) — deliberately NOT
+            // forwarded to the public voting payload.
             return new PublicQuestion(
                 q.Id, q.Order, q.Title,
                 JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
-                q.Kind, q.UpstreamId, pq?.Status ?? q.Status, qr?.VoteCount ?? 0, qr?.MaxVoters ?? 0, qr?.Results);
+                q.Kind, q.OpenChoiceIndex, q.UpstreamId, pq?.Status ?? q.Status,
+                qr?.VoteCount ?? 0, qr?.MaxVoters ?? 0, qr?.Results);
         }).ToList();
 
         return new VotingInfoResponse(

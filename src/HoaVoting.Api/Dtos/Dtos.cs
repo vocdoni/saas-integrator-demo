@@ -36,7 +36,9 @@ public record QuestionInput(
     // single (default) | multiple (approval) | ranked.
     VotingType Kind = VotingType.Single);
 
-public record ProposalChoice(string Title);
+// `Open` marks this choice as the free-text "Other" option (saas-backend #577); single-choice questions
+// only, at most one per question. Voters who pick it must attach a memo.
+public record ProposalChoice(string Title, bool Open = false);
 
 public record ProposalResponse(
     int Id,
@@ -56,6 +58,8 @@ public record QuestionResponse(
     string Title,
     List<string> Choices,
     VotingType Kind,
+    // Index of the free-text "Other" choice (saas-backend #577), or -1 if none.
+    int OpenChoiceIndex,
     // On-chain election id (hex) + status, once the process is published.
     string UpstreamId,
     string Status,
@@ -63,7 +67,9 @@ public record QuestionResponse(
     // histogram matrix; MaxVoters is this question's own census size (turnout denominator).
     int VoteCount,
     int MaxVoters,
-    List<List<string>>? Results);
+    List<List<string>>? Results,
+    // Free-text voter memos on the open choice (saas-backend #577), manager-only + RESULTS-only.
+    List<string>? Memos);
 
 /// <summary>Public, read-only voting-page payload (no auth). Casting is client-side per question.</summary>
 public record VotingInfoResponse(
@@ -85,6 +91,9 @@ public record PublicQuestion(
     string Title,
     List<string> Choices,
     VotingType Kind,
+    // Index of the free-text "Other" choice (saas-backend #577), or -1 if none — the voting page shows a
+    // required memo input when it's selected. Voter memos themselves are never exposed on the public page.
+    int OpenChoiceIndex,
     // The on-chain election id the voter signs against and relays to; empty until published.
     string UpstreamId,
     string Status,

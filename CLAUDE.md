@@ -67,6 +67,15 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   multiple=`multichoice`+`maxChoices`, ranked=raw `ballotProtocol` linear-weighted); the per-question
   ballot array is built in `voting.js`/`VotingPage.jsx` (`buildChoices`). See the
   **vocdoni-ballot-protocol** skill for the encoding.
+- **Open "Other" choice + voter memos (saas-backend #577, unmerged).** A **single-choice** question may
+  mark one choice `openValue` (persisted as `ProposalQuestion.OpenChoiceIndex`, -1 = none). A voter who
+  picks it must attach a free-text `memo`, which rides `VoteEnvelope.memo` via
+  `@vocdoni/api-voting`'s `vote({…, memo})` (≤256 bytes, `MAX_MEMO_BYTES`). Memos come back **inline on
+  `QuestionResults.memos`** on the process read, but **only for a manager/admin caller** and only at
+  `results` — so `ProposalsController` surfaces them to the owner (`QuestionResponse.Memos`) while
+  `VotingController` deliberately drops them (never public). Only single-choice is supported: the
+  backend correlates each vote's selected value with the open choice's value, which only matches
+  `votes = [chosenIndex]`.
 - **Async everything via jobs.** Publish, question-status change, vote relay, bulk member add return a
   `jobId`; the client polls `GET /jobs/{id}` (fail-fast on `failed`). Publish is idempotent (200).
 - **Status + tally reconcile.** `ProposalsController` List/Get (`HydrateAsync`) + `VotingController`

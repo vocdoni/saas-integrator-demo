@@ -5,8 +5,9 @@ import { VotingClient, EphemeralSigner } from '@vocdoni/api-voting'
 // The voter authenticates ONCE against the process census, then signs + relays ONE vote per question
 // (each question is its own on-chain election). Returns [{ upstreamId, voteID }] per answered question.
 //
-// `answers` = [{ upstreamId, choices }] — `choices` is the on-chain ballot array for that question:
-// single → [chosenIndex]; multiple → [v0..vN-1] (1 per pick); ranked → [v0..vN-1] (unique rank values).
+// `answers` = [{ upstreamId, choices, memo? }] — `choices` is the on-chain ballot array for that
+// question (single → [chosenIndex]; multiple → [v0..vN-1] (1 per pick); ranked → [v0..vN-1] unique
+// ranks); `memo` is the optional free-text note attached when the open "Other" choice is picked (#577).
 export async function castProcessVotes({ apiUrl, processId, chainId, memberNumber, answers }) {
   const client = new VocdoniApiClient({ apiUrl })
 
@@ -17,7 +18,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
   // 2. Per answered question: CSP-sign a fresh ephemeral identity for that election, then build + relay.
   const voting = new VotingClient({ client })
   const results = []
-  for (const { upstreamId, choices } of answers) {
+  for (const { upstreamId, choices, memo } of answers) {
     const signer = new EphemeralSigner()
     const { signature, weight } = await client.processes.sign(processId, {
       authToken,
@@ -25,6 +26,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
       electionId: upstreamId, // the target question's on-chain election id
     })
     // VotingClient.vote builds/encodes the vote tx and relays it via POST /vote (unchanged endpoint).
+    // `memo` (free-text on the open choice, #577) rides in VoteEnvelope.memo; omitted when absent.
     const jobId = await voting.vote({
       processId: upstreamId,
       choices,
@@ -32,6 +34,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
       signer,
       cspSignature: signature,
       cspWeight: weight,
+      ...(memo ? { memo } : {}),
     })
     const job = await client.jobs.waitFor(jobId)
     results.push({ upstreamId, voteID: job.result?.voteID ?? jobId })

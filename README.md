@@ -19,6 +19,10 @@ creates **proposals**, and reads voting **results**. Built on the Vocdoni SaaS A
 > reaches `results` status ([saas-backend #596](https://github.com/vocdoni/saas-backend/pull/596)), and
 > the `chainId` needed to sign votes also comes from the process read
 > ([saas-backend #582](https://github.com/vocdoni/saas-backend/pull/582)).
+> A single-choice question may also carry an open **"Other" choice** whose voters attach a free-text
+> **memo** ([saas-backend #577](https://github.com/vocdoni/saas-backend/pull/577), **unmerged** — run
+> `feat/vote-memo`); the memos surface to the org owner inline on the process read (manager-only, once
+> `results`), never to the public voting page.
 
 ## Architecture
 
