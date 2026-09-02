@@ -48,11 +48,12 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
                 q.Id, q.Order, q.Title,
                 JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
                 q.Kind, q.OpenChoiceIndex, q.UpstreamId, pq?.Status ?? q.Status,
-                qr?.VoteCount ?? 0, qr?.MaxVoters ?? 0, qr?.Results);
+                qr?.VoteCount ?? 0, qr?.MaxVoters ?? 0, qr?.Results,
+                q.Budget, q.CostExponent);
         }).ToList();
 
         return new VotingInfoResponse(
             p.VocdoniProcessId, apiUrl, p.ChainId, p.Title, p.Description,
-            p.StartDate, p.EndDate, p.Status.ToString(), questions);
+            p.StartDate, p.EndDate, p.Status.ToString(), questions, p.Anonymous);
     }
 }

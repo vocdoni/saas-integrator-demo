@@ -116,6 +116,27 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         return SendAsync(HttpMethod.Put, $"/processes/{processId}/questions/status", body, ct);
     }
 
+    /// <summary>Replaces a question's eligibility list (saas-backend #621); [] reopens it to the whole census.
+    /// A 202 means an on-chain census resize was enqueued — the list is already committed, so we just wait
+    /// for the job before returning. Upstream 409 (already-signed voters) throws VocdoniApiException.</summary>
+    public async Task<UpdateQuestionCensusResponse> SetQuestionCensusAsync(string processId, string questionId, List<string> memberIds, CancellationToken ct = default)
+    {
+        var resp = await SendAsync<UpdateQuestionCensusResponse>(HttpMethod.Put,
+            $"/processes/{processId}/questions/{questionId}/census",
+            new UpdateQuestionCensusRequest { MemberIds = memberIds }, ct);
+        if (!string.IsNullOrEmpty(resp.JobId))
+            await PollJobAsync(resp.JobId!, ct);
+        return resp;
+    }
+
+    /// <summary>Reads the org's subscription plan features; a missing plan reads as all-off.</summary>
+    public async Task<SubscriptionFeatures> GetSubscriptionFeaturesAsync(string orgAddress, CancellationToken ct = default)
+    {
+        var info = await SendAsync<OrganizationSubscriptionInfo>(
+            HttpMethod.Get, $"/organizations/{orgAddress}/subscription", null, ct);
+        return info.Plan?.Features ?? new SubscriptionFeatures();
+    }
+
     /// <summary>Polls GET /jobs/{id} until the async transaction completes; throws on failure or timeout.</summary>
     // ponytail: bounded poll (~40s), no webhook available. Move to a background worker for production.
     private async Task PollJobAsync(string jobId, CancellationToken ct)

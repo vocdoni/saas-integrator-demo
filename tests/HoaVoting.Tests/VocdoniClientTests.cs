@@ -153,6 +153,94 @@ public class VocdoniClientTests
         Assert.Equal("/processes/proc1/questions/status", Assert.Single(handler.Paths));
     }
 
+    [Fact]
+    public async Task GetSubscriptionFeatures_reads_plan_features()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK,
+            """{"plan":{"features":{"anonymous":true,"overwrite":false}}}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var features = await client.GetSubscriptionFeaturesAsync("0xabc");
+
+        Assert.True(features.Anonymous);
+        Assert.Equal("/organizations/0xabc/subscription", handler.LastPath);
+    }
+
+    [Fact]
+    public async Task GetSubscriptionFeatures_reads_missing_plan_as_all_off()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"plan":null}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        Assert.False((await client.GetSubscriptionFeaturesAsync("0xabc")).Anonymous);
+    }
+
+    [Fact]
+    public async Task CreateVotingProcess_sends_census_anonymous_only_when_set()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"processId":"6a42"}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        await client.CreateVotingProcessAsync(new CreateVotingProcessRequest
+        {
+            OrgAddress = "0xabc",
+            Census = new CensusSpec { AuthFields = ["memberNumber"], Anonymous = true },
+        });
+        Assert.Contains("\"anonymous\":true", handler.LastBody);
+
+        // A regular census omits the flag entirely (null → not serialized).
+        await client.CreateVotingProcessAsync(new CreateVotingProcessRequest
+        {
+            OrgAddress = "0xabc",
+            Census = new CensusSpec { AuthFields = ["memberNumber"] },
+        });
+        Assert.DoesNotContain("anonymous", handler.LastBody);
+    }
+
+    [Fact]
+    public async Task SetQuestionCensus_puts_complete_list_and_returns_without_job()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"eligible":2,"added":1,"removed":0}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var res = await client.SetQuestionCensusAsync("p1", "q1", ["m1", "m2"]);
+
+        Assert.Equal((2, 1, 0), (res.Eligible, res.Added, res.Removed));
+        Assert.Equal(HttpMethod.Put, handler.LastMethod);
+        Assert.Equal("/processes/p1/questions/q1/census", handler.LastPath);
+        Assert.Contains("\"memberIds\":[\"m1\",\"m2\"]", handler.LastBody);
+        Assert.Equal(1, handler.Calls); // no /jobs round trip on a plain 200
+    }
+
+    [Fact]
+    public async Task SetQuestionCensus_polls_job_when_a_resize_was_enqueued()
+    {
+        // 202 + jobId: the list is committed but the on-chain census resize is async — wait for it.
+        var handler = new SequenceHandler(
+            (HttpStatusCode.Accepted, """{"jobId":"j1","eligible":0,"added":0,"removed":3}"""),
+            (HttpStatusCode.OK, """{"status":"completed"}"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var res = await client.SetQuestionCensusAsync("p1", "q1", []);
+
+        Assert.Equal(3, res.Removed);
+        Assert.Equal("/jobs/j1", handler.Paths[^1]);
+    }
+
+    [Fact]
+    public async Task SetQuestionCensus_surfaces_409_with_body()
+    {
+        // 40173: restricting would strip a voter the CSP already signed for. The body names them.
+        var handler = new CapturingHandler(HttpStatusCode.Conflict,
+            """{"code":40173,"error":"member already signed","data":{"signedMemberIds":["m2"]}}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var ex = await Assert.ThrowsAsync<VocdoniApiException>(() => client.SetQuestionCensusAsync("p1", "q1", ["m1"]));
+
+        Assert.Equal(HttpStatusCode.Conflict, ex.Status);
+        Assert.Contains("signedMemberIds", ex.Body);
+    }
+
     // Returns each queued response in order (last one repeats), recording every request path.
     private sealed class SequenceHandler(params (HttpStatusCode Code, string Body)[] responses) : HttpMessageHandler
     {
@@ -177,17 +265,19 @@ public class VocdoniClientTests
         public string? LastAuthorization { get; private set; }
         public HttpMethod? LastMethod { get; private set; }
         public string? LastPath { get; private set; }
+        public string? LastBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls++;
             LastAuthorization = request.Headers.Authorization?.ToString();
             LastMethod = request.Method;
             LastPath = request.RequestUri?.AbsolutePath;
-            return Task.FromResult(new HttpResponseMessage(code)
+            LastBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
+            return new HttpResponseMessage(code)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
-            });
+            };
         }
     }
 }

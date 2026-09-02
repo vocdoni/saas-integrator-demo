@@ -41,27 +41,55 @@ Authorization: Bearer {{ownerToken}}
 GET {{host}}/api/associations/{{assocId}}/homeowners
 Authorization: Bearer {{ownerToken}}
 
-### 6. Owner creates a proposal (Vocdoni: census -> publish -> process -> publish)
+### 6. Owner checks the plan features (gates the anonymous toggle)
+GET {{host}}/api/associations/{{assocId}}/features
+Authorization: Bearer {{ownerToken}}
+
+### 7. Owner creates a multi-question proposal (Vocdoni: POST /processes -> publish -> read back)
+# kind = single | multiple | ranked | cumulative (budget + costExponent 1|2).
+# anonymous = blind-CSP voting (plan-gated — see step 6).
 # @name createProposal
 POST {{host}}/api/associations/{{assocId}}/proposals
 Content-Type: application/json
 Authorization: Bearer {{ownerToken}}
 
 {
-  "title": "Repaint the lobby?",
-  "description": "Vote on repainting the shared lobby.",
-  "choices": [ { "title": "Yes" }, { "title": "No" } ],
+  "title": "Annual assembly",
+  "description": "Two decisions for this year.",
+  "anonymous": false,
   "startDate": "2026-06-24T00:00:00Z",
   "endDate": "2026-07-01T00:00:00Z",
-  "votingType": "single"
+  "questions": [
+    {
+      "title": "Repaint the lobby?",
+      "kind": "single",
+      "choices": [ { "title": "Yes" }, { "title": "No" } ]
+    },
+    {
+      "title": "Distribute the maintenance budget",
+      "kind": "cumulative",
+      "budget": 10,
+      "costExponent": 1,
+      "choices": [ { "title": "Garden" }, { "title": "Elevator" }, { "title": "Roof" } ]
+    }
+  ]
 }
 
 @proposalId = {{createProposal.response.body.id}}
+@questionId = {{createProposal.response.body.questions[0].id}}
 
-### 7. Read results (homeowners cast votes client-side via the Vocdoni JS SDK)
-GET {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}/results
+### 8. Read the proposal (live status + inline per-question tallies)
+GET {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}
 Authorization: Bearer {{ownerToken}}
 
-### 8. Close voting
+### 9. Restrict a question's eligibility on the live process (complete list; [] = everyone).
+# 409 with signedMemberIds when a voter who already holds a ballot signature would be removed.
+PUT {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}/questions/{{questionId}}/eligibility
+Content-Type: application/json
+Authorization: Bearer {{ownerToken}}
+
+{ "memberIds": [] }
+
+### 10. Close voting
 POST {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}/close
 Authorization: Bearer {{ownerToken}}

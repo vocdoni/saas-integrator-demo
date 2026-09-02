@@ -21,8 +21,12 @@ export async function api(path, { method = 'GET', body } = {}) {
   const text = await res.text()
   const data = text ? safeJson(text) : null
   if (!res.ok) {
-    const msg = data?.detail || data?.error || data?.title || (typeof data === 'string' ? data : '') || `HTTP ${res.status}`
-    throw new Error(msg)
+    const msg =
+      data?.detail || data?.error || data?.message || data?.title || (typeof data === 'string' ? data : '') || `HTTP ${res.status}`
+    const err = new Error(msg)
+    err.status = res.status
+    err.data = data // structured error bodies (e.g. eligibility 409 carries signedMemberIds)
+    throw err
   }
   return data
 }

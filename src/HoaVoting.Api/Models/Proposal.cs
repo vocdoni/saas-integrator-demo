@@ -28,6 +28,10 @@ public class Proposal
     /// <summary>Vochain chain id the process's votes must be signed against (captured from the process read, #582).</summary>
     public string ChainId { get; set; } = "";
 
+    /// <summary>Blind-CSP anonymous voting (saas-backend #641): the CSP cannot link voters to ballots.
+    /// Set at creation; the public voting page uses it to pick the blind-signature flow.</summary>
+    public bool Anonymous { get; set; }
+
     public List<ProposalQuestion> Questions { get; set; } = new();
 
     public DateTimeOffset StartDate { get; set; }
@@ -59,8 +63,14 @@ public class ProposalQuestion
     /// </summary>
     public int OpenChoiceIndex { get; set; } = -1;
 
-    /// <summary>Ballot kind for this question: single choice, multiple (approval), or ranked.</summary>
+    /// <summary>Ballot kind for this question: single choice, multiple (approval), ranked, or cumulative.</summary>
     public VotingType Kind { get; set; }
+
+    /// <summary>Cumulative only: total credits a voter distributes across the choices.</summary>
+    public int? Budget { get; set; }
+
+    /// <summary>Cumulative only: 1 = linear, 2 = quadratic (v credits on one choice cost v²).</summary>
+    public int? CostExponent { get; set; }
 
     /// <summary>On-chain election id (hex), assigned when the process is published. Empty before publish.</summary>
     public string UpstreamId { get; set; } = "";

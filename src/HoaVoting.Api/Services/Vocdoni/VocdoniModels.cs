@@ -88,6 +88,9 @@ public sealed class CreateVotingProcessRequest
 public sealed class CensusSpec
 {
     public bool Weighted { get; set; }
+    /// <summary>Blind-CSP anonymous voting (saas-backend #641, OFF_CHAIN_CA_V2): the CSP cannot link
+    /// voter identity to the ballot. Null ⇒ omitted on the wire (regular census).</summary>
+    public bool? Anonymous { get; set; }
     public List<string>? AuthFields { get; set; }
     public List<string>? TwoFaFields { get; set; }
     public string? GroupId { get; set; }
@@ -99,9 +102,10 @@ public sealed class VotingProcessQuestionRequest
     public Dictionary<string, string> Title { get; set; } = new();
     public Dictionary<string, string>? Description { get; set; }
     public List<VocdoniChoice> Choices { get; set; } = new();
-    /// <summary>"singlechoice" | "multichoice". Ranked/approval use <see cref="BallotProtocol"/> instead.</summary>
+    /// <summary>"singlechoice" | "multichoice" | "ranked" | "cumulative" (saas-backend #638 named types).</summary>
     public string Type { get; set; } = "singlechoice";
-    public QuestionTypeSetup TypeSetup { get; set; } = new();
+    /// <summary>Null ⇒ omitted: ranked derives everything from the choices and rejects a non-empty typeSetup.</summary>
+    public QuestionTypeSetup? TypeSetup { get; set; }
     /// <summary>Raw vote-type override (wins over type/typeSetup) — used for ranked/approval/quadratic.</summary>
     public BallotProtocol? BallotProtocol { get; set; }
     public bool SecretUntilTheEnd { get; set; }
@@ -119,11 +123,16 @@ public sealed class VocdoniChoice
     public bool OpenValue { get; set; }
 }
 
+/// <summary>All fields nullable so only the subset relevant to the question type serializes.</summary>
 public sealed class QuestionTypeSetup
 {
-    public uint MinChoices { get; set; }
-    public uint MaxChoices { get; set; }
-    public bool UniqueChoices { get; set; }
+    public uint? MinChoices { get; set; }
+    public uint? MaxChoices { get; set; }
+    public bool? UniqueChoices { get; set; }
+    /// <summary>Cumulative only: total credits a voter distributes.</summary>
+    public uint? Budget { get; set; }
+    /// <summary>Cumulative only: 1 = linear, 2 = quadratic (cost of v credits on a choice is v²).</summary>
+    public uint? CostExponent { get; set; }
 }
 
 /// <summary>Raw on-chain vote-type override (note <c>UniqueValues</c>, not UniqueChoices).</summary>
@@ -231,4 +240,41 @@ public sealed class JobStatusResponse
     public string? Status { get; set; }
     /// <summary>Failure detail(s) when Status is "failed" (empty otherwise).</summary>
     public List<string>? Errors { get; set; }
+}
+
+// --- live per-question eligibility (saas-backend #621) ----------------------
+
+/// <summary>PUT /processes/{pid}/questions/{qid}/census — the COMPLETE desired list, not a delta. [] = open to the whole census.</summary>
+public sealed class UpdateQuestionCensusRequest
+{
+    public List<string> MemberIds { get; set; } = new();
+}
+
+public sealed class UpdateQuestionCensusResponse
+{
+    /// <summary>Set when the change needs an on-chain census resize (202) — poll the job.</summary>
+    public string? JobId { get; set; }
+    /// <summary>Resulting eligible count; 0 = open to everyone.</summary>
+    public int Eligible { get; set; }
+    public int Added { get; set; }
+    public int Removed { get; set; }
+}
+
+// --- organization subscription (plan feature gating) ------------------------
+
+/// <summary>Subset of GET /organizations/{org}/subscription we read.</summary>
+public sealed class OrganizationSubscriptionInfo
+{
+    public SubscriptionPlan? Plan { get; set; }
+}
+
+public sealed class SubscriptionPlan
+{
+    public SubscriptionFeatures? Features { get; set; }
+}
+
+public sealed class SubscriptionFeatures
+{
+    /// <summary>Gates blind-CSP (and zk) anonymous elections. Publish fails asynchronously without it.</summary>
+    public bool Anonymous { get; set; }
 }

@@ -28,11 +28,11 @@ not in this repo.
 
 ```bash
 docker compose up --build          # api :5095, web :3000 (proxies /api). Migrates + seeds on boot.
-dotnet test                         # 11 tests. No local .NET? run in a container:
+dotnet test                         # 26 tests. No local .NET? run in a container:
   docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test
 dotnet test --filter <TestName>     # single test
 cd web && npm install && npm run dev # SPA hot reload :5173 (Vite proxies /api → :5095; needs api up)
-cd web && npm test                  # vitest — covers voting.js (batch relay + partial failure)
+cd web && npm test                  # vitest — covers voting.js (batch/blind sign, relay, partial failure)
 cd web && npm run build             # production bundle (also what the web image builds)
 ./e2e.sh                            # full live flow; VTYPE=single|multiple|ranked; needs .env creds
 ```
@@ -59,25 +59,47 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   one async **batch** (`POST /processes/{id}/publish` → poll `/jobs/{id}`), then reads it back
   (`GET /processes/{id}`) to capture each question's on-chain `UpstreamId` + `Status`.
 - **Voting is client-side and batched; the backend never casts or signs.** `web/src/voting.js`
-  `castProcessVotes()` authenticates **once** per process (`client.processes.authStep0`), then for
-  each answered question CSP-signs (`client.processes.sign` with that question's `upstreamId`) and
-  builds the signed envelope locally (`@vocdoni/api-voting`'s `EphemeralSigner` +
-  `buildVoteTransaction`). All envelopes then go out in **one** `client.elections.voteBatch()` call
-  (`POST /votes`, saas-backend #610) → **one** job. The batch is accepted or rejected as a unit, which
-  is the point: relaying per question could leave a ballot half-voted. Per-vote outcomes come back
-  index-aligned in `result.votes[]`, and because a job fails if *any* envelope failed, the
-  `jobs.waitFor()` call catches `JobFailedError` to read the outcomes off the failed job rather than
-  reporting blanket failure. Bridge to the page: `VotingInfoResponse.ApiUrl` + `ChainId`.
-- **Voting kinds are a cross-cut across four places.** `VotingType` (`single|multiple|ranked`,
-  `Models/VotingType.cs`, JSON as a camelCase string via `JsonStringEnumConverter` in `Program.cs`) →
-  a #571 question in `ProposalsController.ToQuestionRequest` (single=`singlechoice`,
-  multiple=`multichoice`+`maxChoices`, ranked=raw `ballotProtocol` linear-weighted); the per-question
-  ballot array is built in `voting.js`/`VotingPage.jsx` (`buildChoices`). See the
-  **vocdoni-ballot-protocol** skill for the encoding.
-- **Open "Other" choice + voter memos (saas-backend #577, unmerged).** A **single-choice** question may
+  `castProcessVotes()` authenticates **once** per process (`client.processes.authStep0`), then signs the
+  whole ballot in **one** CSP call — the single fork in the flow (both branches return
+  `[{upstreamId, signature, weight, code?, error?}]`, matched by `upstreamId`, never index):
+  `client.processes.signBatch` (saas-backend #634) for a regular census, or `signBlindCspBallots()`
+  (blind CSP, #641 — see the anonymous bullet) for an anonymous one. One fresh `EphemeralSigner` per
+  question, created *before* signing; envelopes built locally (`buildVoteTransaction`), then out in
+  **one** `client.elections.voteBatch()` call (`POST /votes`, saas-backend #610) → **one** job. The
+  batch is accepted or rejected as a unit, which is the point: relaying per question could leave a
+  ballot half-voted. Per-vote outcomes come back index-aligned with the *envelopes* in
+  `result.votes[]` (a per-ballot sign failure becomes a failed row and the rest still relay; no
+  automatic re-sign — it burns the finite overwrite budget), and because a job fails if *any*
+  envelope failed, the `jobs.waitFor()` call catches `JobFailedError` to read the outcomes off the
+  failed job rather than reporting blanket failure. Bridge to the page: `VotingInfoResponse.ApiUrl`
+  + `ChainId` + `Anonymous`.
+- **Anonymous voting (saas-backend #641, blind CSP).** `CreateProposalRequest.Anonymous` →
+  `census.anonymous: true` on the process create → the census swaps to blind signatures
+  (`OFF_CHAIN_CA_V2`): the CSP cannot link a voter to a ballot, and votes carry an
+  `ECDSA_BLIND_PIDSALTED` proof (`proofType` on `buildVoteTransaction`; the CSP-pinned `weight` must
+  be passed back verbatim — it salts the key the chain verifies). Auth and relay are unchanged; the
+  plain sign endpoints 400 on an anonymous census and vice versa. **Plan-gated**: publish fails
+  *async + opaquely* on plans without `features.anonymous`, so the admin form disables the toggle via
+  `GET api/associations/{id}/features` (→ `GET /organizations/{org}/subscription`).
+- **Voting kinds are a cross-cut across four places.** `VotingType`
+  (`single|multiple|ranked|cumulative`, `Models/VotingType.cs`, JSON as a camelCase string via
+  `JsonStringEnumConverter` in `Program.cs`) → a **named** #638 type in
+  `ProposalsController.ToQuestionRequest` (single=`singlechoice`, multiple=`multichoice`+`maxChoices`,
+  ranked=`ranked` with **no typeSetup** — the backend derives the protocol and 400s on contradictions,
+  cumulative=`cumulative`+`typeSetup{budget, costExponent 1|2}`); the per-question ballot array is
+  built in `voting.js`/`VotingPage.jsx` (`buildChoices` — cumulative = one credit amount per choice,
+  cost Σ v^costExponent ≤ budget). See the **vocdoni-ballot-protocol** skill for the encoding.
+- **Live per-question eligibility (saas-backend #621).** `PUT api/…/proposals/{id}/questions/{qid}/eligibility`
+  → upstream `PUT /processes/{pid}/questions/{quid}/census` with the **complete** member-id list
+  (`[]` = whole census; the upstream question id is resolved by `UpstreamId` from the process read —
+  not stored). 202 enqueues an on-chain census resize (the client polls the job). Upstream 409 code
+  **40173** = a voter already CSP-signed would lose eligibility — surfaced with `signedMemberIds` so
+  the UI (`EligibilityEditor` in `Proposals.jsx`) names them. Current restriction rides the manager
+  process read (`QuestionResponse.EligibleMemberIds`).
+- **Open "Other" choice + voter memos (saas-backend #577).** A **single-choice** question may
   mark one choice `openValue` (persisted as `ProposalQuestion.OpenChoiceIndex`, -1 = none). A voter who
   picks it must attach a free-text `memo`, which rides `VoteEnvelope.memo` via
-  `@vocdoni/api-voting`'s `vote({…, memo})` (≤256 bytes, `MAX_MEMO_BYTES`). Memos come back **inline on
+  `@vocdoni/api-voting`'s `buildVoteTransaction({…, memo})` (≤256 bytes, `MAX_MEMO_BYTES`). Memos come back **inline on
   `QuestionResults.memos`** on the process read, but **only for a manager/admin caller** and only at
   `results` — so `ProposalsController` surfaces them to the owner (`QuestionResponse.Memos`) while
   `VotingController` deliberately drops them (never public). Only single-choice is supported: the
@@ -91,8 +113,8 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   question hits **`results`** status, saas-backend #596). They refresh each question's `Status`, mark
   the proposal `Closed` when all questions ended, and pass the inline tallies into the response (matched
   by `UpstreamId`). Tallies render via `web/src/tally.js` `tallyCounts(results, kind)` +
-  `QuestionResults.jsx` (single=`results[0]`, multiple=`results[i][1]`, ranked=Borda `Σ results[i][v]·v`;
-  `maxVoters` is the per-question turnout denominator). The public page also derives finished via
+  `QuestionResults.jsx` (single=`results[0]`, multiple=`results[i][1]`, ranked and cumulative =
+  index-weighted `Σ results[i][v]·v`; `maxVoters` is the per-question turnout denominator). The public page also derives finished via
   `isFinished`. (The separate `GET /processes/{id}/results` endpoint exists but is unused — its shape
   dropped `status`, which we need every read.)
 - **Auth-only census.** Voters authenticate by **member number** (no 2FA); the process census is

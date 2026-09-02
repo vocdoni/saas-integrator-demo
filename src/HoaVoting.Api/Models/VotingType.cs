@@ -11,4 +11,8 @@ public enum VotingType
 
     /// <summary>Ranked (linear-weighted) — order the choices. <c>maxCount:N, maxValue:N-1, uniqueChoices:true</c>.</summary>
     Ranked,
+
+    /// <summary>Cumulative/quadratic — distribute a credit budget among choices.
+    /// <c>maxValue:0 (amounts mode), maxTotalCost:budget, costExponent:1|2</c>.</summary>
+    Cumulative,
 }
