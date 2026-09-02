@@ -12,16 +12,18 @@ const ONE_DAY = 864e5
 const plusDay = (localStr) => toLocalInput(new Date(new Date(localStr).getTime() + ONE_DAY))
 
 // openIndex = the choice marked as the free-text "Other" option (#577), or -1. Single-choice only.
-const blankQuestion = () => ({ title: '', choices: ['Yes', 'No'], kind: 'single', openIndex: -1 })
+// budget/costExponent apply to cumulative questions only (costExponent 2 = quadratic).
+const blankQuestion = () => ({ title: '', choices: ['Yes', 'No'], kind: 'single', openIndex: -1, budget: 10, costExponent: 1 })
 const blankForm = () => {
   const start = toLocalInput(new Date())
-  return { title: '', description: '', startDate: start, endDate: plusDay(start), questions: [blankQuestion()] }
+  return { title: '', description: '', startDate: start, endDate: plusDay(start), questions: [blankQuestion()], anonymous: false }
 }
 
 const KINDS = [
   ['single', 'Single choice'],
   ['multiple', 'Multiple choice'],
   ['ranked', 'Ranked voting'],
+  ['cumulative', 'Cumulative voting'],
 ]
 
 export default function Proposals({ assoc }) {
@@ -31,6 +33,9 @@ export default function Proposals({ assoc }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [closing, setClosing] = useState(() => new Set()) // proposal ids with a pending close
+  // Anonymous voting is plan-gated upstream and publish fails opaquely without it — fetch the flag
+  // (best-effort: an unreachable read just leaves the toggle disabled).
+  const [anonymousAllowed, setAnonymousAllowed] = useState(false)
 
   const base = `/associations/${assoc.id}/proposals`
 
@@ -46,6 +51,9 @@ export default function Proposals({ assoc }) {
   }
   useEffect(() => {
     load()
+    api(`/associations/${assoc.id}/features`)
+      .then((f) => setAnonymousAllowed(!!f?.anonymousVoting))
+      .catch(() => setAnonymousAllowed(false))
   }, [assoc.id])
 
   // Question + choice editing (functional updates — no stale closures).
@@ -78,9 +86,11 @@ export default function Proposals({ assoc }) {
         choices: q.choices
           .map((title, i) => ({ title: title.trim(), open: q.kind === 'single' && i === q.openIndex }))
           .filter((c) => c.title),
+        ...(q.kind === 'cumulative' ? { budget: Number(q.budget), costExponent: Number(q.costExponent) } : {}),
       }))
       if (questions.some((q) => !q.title)) throw new Error('Every question needs a title.')
       if (questions.some((q) => q.choices.length < 2)) throw new Error('Every question needs at least two choices.')
+      if (questions.some((q) => q.kind === 'cumulative' && !(q.budget > 0))) throw new Error('Cumulative questions need a budget of at least 1.')
       await api(base, {
         method: 'POST',
         body: {
@@ -89,6 +99,7 @@ export default function Proposals({ assoc }) {
           startDate: new Date(form.startDate).toISOString(),
           endDate: new Date(form.endDate).toISOString(),
           questions,
+          anonymous: form.anonymous,
         },
       })
       setForm(blankForm())
@@ -203,10 +214,49 @@ export default function Proposals({ assoc }) {
                     </label>
                   ))}
                 </fieldset>
+                {q.kind === 'cumulative' && (
+                  <div className="cumulative-setup">
+                    <label className="check small">
+                      Budget
+                      <input
+                        type="number"
+                        className="alloc-input"
+                        min={1}
+                        step={1}
+                        value={q.budget}
+                        onChange={(e) => setQuestion(qi, { budget: e.target.value })}
+                        required
+                      />
+                    </label>
+                    <label className="check small">
+                      <input type="radio" name={`cost-${qi}`} checked={q.costExponent === 1} onChange={() => setQuestion(qi, { costExponent: 1 })} />
+                      <span>Linear</span>
+                    </label>
+                    <label className="check small" title="v credits on one choice cost v² budget">
+                      <input type="radio" name={`cost-${qi}`} checked={q.costExponent === 2} onChange={() => setQuestion(qi, { costExponent: 2 })} />
+                      <span>Quadratic</span>
+                    </label>
+                  </div>
+                )}
               </div>
             ))}
             <button type="button" className="link" onClick={addQuestion}>+ Add question</button>
           </div>
+
+          <label
+            className="check"
+            title={anonymousAllowed
+              ? 'Blind-signature voting: the census authority cannot link voters to ballots.'
+              : 'Anonymous voting is not included in this organization’s plan.'}
+          >
+            <input
+              type="checkbox"
+              checked={form.anonymous}
+              disabled={!anonymousAllowed}
+              onChange={(e) => setForm({ ...form, anonymous: e.target.checked })}
+            />
+            <span>Anonymous voting{anonymousAllowed ? '' : ' (not in your plan)'}</span>
+          </label>
 
           {error && <div className="error">{error}</div>}
           <button disabled={busy}>{busy ? 'Publishing… (~10–30s)' : 'Create & publish'}</button>
@@ -242,6 +292,7 @@ export default function Proposals({ assoc }) {
                   {p.description && <p className="p-desc small">{p.description}</p>}
                   <div className="p-meta">
                     <span className={`status s-${status.toLowerCase()}`}>{status}</span>
+                    {p.anonymous && <span className="badge-anon">anonymous</span>}
                     <span className="mono small muted" title={p.vocdoniProcessId}>{short(p.vocdoniProcessId)}</span>
                   </div>
                   <div className="p-questions">
@@ -252,6 +303,9 @@ export default function Proposals({ assoc }) {
                           {q.status && <span className={`status s-${q.status.toLowerCase()}`}>{q.status}</span>}
                         </div>
                         <QuestionResults q={q} />
+                        {!finished && q.upstreamId && (
+                          <EligibilityEditor assoc={assoc} proposal={p} q={q} onChanged={() => api(base).then(setItems).catch(() => {})} />
+                        )}
                         {q.memos?.length > 0 && (
                           <div className="memos">
                             <span className="eyebrow">Free-text answers ({q.memos.length})</span>
@@ -272,6 +326,108 @@ export default function Proposals({ assoc }) {
       </section>
 
       <DangerZone assoc={assoc} />
+    </div>
+  )
+}
+
+// Live per-question voter eligibility (saas-backend #621). The stored restriction is the COMPLETE
+// member-id list; empty = the whole census. The backend refuses (409) to strip a voter who already
+// holds a ballot signature while the question runs — those members are named in the error.
+function EligibilityEditor({ assoc, proposal, q, onChanged }) {
+  const [open, setOpen] = useState(false)
+  const [homeowners, setHomeowners] = useState(null) // lazy-loaded when the editor opens
+  const [everyone, setEveryone] = useState(!(q.eligibleMemberIds?.length > 0))
+  const [checked, setChecked] = useState(() => new Set(q.eligibleMemberIds ?? []))
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const restricted = q.eligibleMemberIds?.length > 0
+  const summary = restricted ? `${q.eligibleMemberIds.length} member${q.eligibleMemberIds.length === 1 ? '' : 's'}` : 'everyone'
+
+  async function toggleOpen() {
+    setErr('')
+    if (!open && homeowners === null) {
+      try {
+        setHomeowners(await api(`/associations/${assoc.id}/homeowners`))
+      } catch (e) {
+        setErr(e.message)
+        return
+      }
+    }
+    // Re-seed from the current server state each time the editor opens.
+    setEveryone(!(q.eligibleMemberIds?.length > 0))
+    setChecked(new Set(q.eligibleMemberIds ?? []))
+    setOpen(!open)
+  }
+
+  const toggleMember = (id) =>
+    setChecked((s) => {
+      const n = new Set(s)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
+    })
+
+  async function save() {
+    setErr('')
+    if (!everyone && checked.size === 0) {
+      setErr('Select at least one member, or choose "No restriction".')
+      return
+    }
+    setSaving(true)
+    try {
+      await api(`/associations/${assoc.id}/proposals/${proposal.id}/questions/${q.id}/eligibility`, {
+        method: 'PUT',
+        body: { memberIds: everyone ? [] : [...checked] },
+      })
+      setOpen(false)
+      onChanged()
+    } catch (e) {
+      const ids = e.data?.signedMemberIds
+      const names = ids?.length
+        ? ids.map((id) => {
+            const h = homeowners?.find((x) => x.id === id)
+            return h ? `${h.name} ${h.surname ?? ''}`.trim() : id
+          })
+        : null
+      setErr(names ? `${e.message} Affected: ${names.join(', ')}.` : e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="eligibility">
+      <span className="small muted">
+        Eligibility: <b>{summary}</b>{' '}
+        <button type="button" className="link" onClick={toggleOpen}>{open ? 'Cancel' : 'Edit'}</button>
+      </span>
+      {open && homeowners && (
+        <div className="eligibility-editor">
+          <label className="check small">
+            <input type="radio" checked={everyone} onChange={() => setEveryone(true)} />
+            <span>No restriction (everyone in the census)</span>
+          </label>
+          <label className="check small">
+            <input type="radio" checked={!everyone} onChange={() => setEveryone(false)} />
+            <span>Only these members:</span>
+          </label>
+          {!everyone && (
+            <div className="eligibility-members">
+              {homeowners.map((h) => (
+                <label key={h.id} className="check small">
+                  <input type="checkbox" checked={checked.has(h.id)} onChange={() => toggleMember(h.id)} />
+                  <span>{h.name} {h.surname ?? ''} <span className="mono muted">#{h.memberNumber}</span></span>
+                </label>
+              ))}
+            </div>
+          )}
+          {err && <div className="error small">{err}</div>}
+          <button type="button" className="link" disabled={saving} onClick={save}>
+            {saving ? 'Saving…' : 'Save eligibility'}
+          </button>
+        </div>
+      )}
+      {err && !open && <div className="error small">{err}</div>}
     </div>
   )
 }

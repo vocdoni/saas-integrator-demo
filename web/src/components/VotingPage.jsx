@@ -13,7 +13,8 @@ const fmt = (s) => {
 }
 
 // Build the on-chain ballot array for one question from its UI answer.
-// single → [chosenIndex]; multiple → one 0/1 per option; ranked → unique rank per option (top = n-1).
+// single → [chosenIndex]; multiple → one 0/1 per option; ranked → unique rank per option (top = n-1);
+// cumulative → one credit amount per option.
 function buildChoices(q, ans) {
   const n = q.choices.length
   if (q.kind === 'multiple') return q.choices.map((_, i) => (ans.selected.includes(i) ? 1 : 0))
@@ -22,11 +23,19 @@ function buildChoices(q, ans) {
     ans.order.forEach((optIdx, pos) => (ballot[optIdx] = n - 1 - pos))
     return ballot
   }
+  if (q.kind === 'cumulative') return ans.alloc
   return [ans.selected[0]]
 }
 
-const isAnswered = (q, ans) => (q.kind === 'ranked' ? true : (ans?.selected?.length ?? 0) > 0)
-const blankAnswer = (q) => ({ selected: [], order: q.choices.map((_, i) => i), memo: '' })
+// Cumulative: the cost of putting v credits on one choice is v^costExponent (v² when quadratic);
+// the summed cost must fit the budget.
+const allocCost = (q, alloc) => (alloc ?? []).reduce((s, v) => s + Math.pow(v, q.costExponent || 1), 0)
+
+const isAnswered = (q, ans) =>
+  q.kind === 'ranked' ? true
+  : q.kind === 'cumulative' ? (ans?.alloc?.some((v) => v > 0) ?? false) && allocCost(q, ans?.alloc) <= q.budget
+  : (ans?.selected?.length ?? 0) > 0
+const blankAnswer = (q) => ({ selected: [], order: q.choices.map((_, i) => i), alloc: q.choices.map(() => 0), memo: '' })
 
 // Did the voter pick the question's open "Other" choice (single-choice only, #577)?
 const openSelected = (q, ans) => q.kind === 'single' && q.openChoiceIndex >= 0 && ans?.selected?.[0] === q.openChoiceIndex
@@ -90,6 +99,11 @@ export default function VotingPage({ processId }) {
     next.splice(pos, 0, moved)
     setAns(qid, { order: next })
   }
+  const setAlloc = (q, i, value) => {
+    const alloc = [...(answers[q.id]?.alloc ?? q.choices.map(() => 0))]
+    alloc[i] = Math.max(0, Math.floor(Number(value) || 0))
+    setAns(q.id, { alloc })
+  }
 
   async function submit(e) {
     e.preventDefault()
@@ -109,6 +123,7 @@ export default function VotingPage({ processId }) {
         processId: info.processId,
         chainId: info.chainId,
         memberNumber: memberNumber.trim(),
+        anonymous: info.anonymous,
         answers: payload,
       })
       setCast(results)
@@ -150,6 +165,11 @@ export default function VotingPage({ processId }) {
     <>
       <div className="vote-eyebrow">
         <span className="eyebrow">{done ? 'Voting closed' : 'Official ballot'}</span>
+        {info.anonymous && (
+          <span className="badge-anon" title="Blind-signature voting: the census authority cannot link your identity to your ballot.">
+            Anonymous ballot
+          </span>
+        )}
         <span className={`status s-${statusText.toLowerCase()}`}>{statusText}</span>
       </div>
       <h1>{info.title}</h1>
@@ -202,6 +222,7 @@ export default function VotingPage({ processId }) {
               onToggle={(i) => toggle(q, i)}
               onMove={(pos, dir) => moveRank(q.id, pos, dir)}
               onDrop={(from, pos) => dropRank(q.id, from, pos)}
+              onAlloc={(i, v) => setAlloc(q, i, v)}
               onMemo={(v) => setAns(q.id, { memo: v })}
             />
           ))}
@@ -228,9 +249,41 @@ export default function VotingPage({ processId }) {
   )
 }
 
-// One question's ballot: radios (single), checkboxes (multiple), or a drag-to-rank list (ranked).
-function QuestionBallot({ q, ans, onToggle, onMove, onDrop, onMemo }) {
+// One question's ballot: radios (single), checkboxes (multiple), a drag-to-rank list (ranked), or
+// a credit allocator (cumulative/quadratic).
+function QuestionBallot({ q, ans, onToggle, onMove, onDrop, onAlloc, onMemo }) {
   const [dragIndex, setDragIndex] = useState(null)
+
+  if (q.kind === 'cumulative') {
+    const quadratic = q.costExponent === 2
+    const cost = allocCost(q, ans.alloc)
+    const over = cost > q.budget
+    return (
+      <fieldset className="vote-choices">
+        <legend className="eyebrow">
+          {q.title} — distribute your {q.budget} credits{quadratic ? ' (quadratic: v credits on a choice cost v²)' : ''}
+        </legend>
+        {q.choices.map((c, i) => (
+          <label key={i} className="vote-choice cumulative">
+            <input
+              type="number"
+              className="alloc-input"
+              min={0}
+              step={1}
+              value={ans.alloc?.[i] ?? 0}
+              onChange={(e) => onAlloc(i, e.target.value)}
+            />
+            <span>{c}</span>
+          </label>
+        ))}
+        <div className={`alloc-meter${over ? ' over' : ''}`}>
+          Budget <b className="num">{q.budget}</b> · allocated cost <b className="num">{cost}</b> · remaining{' '}
+          <b className="num">{Math.max(0, q.budget - cost)}</b>
+          {over && <span className="alloc-over"> — over budget</span>}
+        </div>
+      </fieldset>
+    )
+  }
 
   if (q.kind === 'ranked') {
     return (

@@ -25,4 +25,12 @@ public interface IVocdoniClient
 
     /// <summary>Changes question status (e.g. "ended"); null/empty questionIds ⇒ all published questions.</summary>
     Task SetQuestionsStatusAsync(string processId, string status, List<string>? questionIds = null, CancellationToken ct = default);
+
+    /// <summary>Replaces a question's eligibility list (saas-backend #621). Complete list, [] = open to the
+    /// whole census; waits for the census-resize job when one is enqueued (202). Upstream 409 (code 40173,
+    /// voter already signed) surfaces as a VocdoniApiException the caller can inspect.</summary>
+    Task<UpdateQuestionCensusResponse> SetQuestionCensusAsync(string processId, string questionId, List<string> memberIds, CancellationToken ct = default);
+
+    /// <summary>Reads the org's subscription plan features (e.g. whether anonymous voting is allowed).</summary>
+    Task<SubscriptionFeatures> GetSubscriptionFeaturesAsync(string orgAddress, CancellationToken ct = default);
 }

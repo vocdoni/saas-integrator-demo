@@ -158,7 +158,8 @@ if [ -n "${PROP_ID:-}" ]; then
 
   step "Close proposal (ends every question)"
   req POST "/api/associations/$ASSOC_ID/proposals/$PROP_ID/close" "" "$OWNER_TOKEN"
-  [ "$HTTP" = 204 ] && ok "204" || bad "close HTTP $HTTP — $BODY"
+  # Close enqueues the on-chain end and returns 202; the status reconciles on the next read.
+  [ "$HTTP" = 202 ] && ok "202 (close enqueued)" || bad "close HTTP $HTTP — $BODY"
 fi
 
 summary

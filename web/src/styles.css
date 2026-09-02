@@ -1252,6 +1252,68 @@ code {
   overflow-wrap: anywhere;
 }
 
+/* Anonymous (blind-CSP) ballot marker — same seal shape as .status. */
+.badge-anon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  border: 1px dashed var(--border);
+}
+
+/* Cumulative/quadratic: per-choice credit input + budget meter. */
+.alloc-input {
+  width: 72px;
+}
+
+.alloc-meter {
+  font-size: 13px;
+  color: var(--ink-2);
+  padding-top: 6px;
+}
+
+.alloc-meter.over,
+.alloc-over {
+  color: var(--danger);
+}
+
+.cumulative-setup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+/* Per-question live eligibility editor (#621). */
+.eligibility {
+  margin-top: 8px;
+}
+
+.eligibility-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--paper-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.eligibility-members {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 20px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

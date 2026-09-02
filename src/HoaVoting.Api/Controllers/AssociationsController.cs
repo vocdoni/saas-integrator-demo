@@ -101,6 +101,26 @@ public class AssociationsController(AppDbContext db, IVocdoniClient vocdoni) : A
     }
 
     /// <summary>
+    /// Plan features relevant to the admin UI. Fetched lazily by the proposal form (not folded into
+    /// the association reads, which would put an upstream call on every page load): anonymous voting
+    /// is plan-gated upstream and its publish fails asynchronously + opaquely on unsupported plans,
+    /// so the UI disables the toggle instead.
+    /// </summary>
+    [Authorize]
+    [HttpGet("{id:int}/features")]
+    public async Task<ActionResult<AssociationFeaturesResponse>> Features(int id, CancellationToken ct)
+    {
+        var assoc = await db.Associations.FindAsync([id], ct);
+        if (assoc is null) return NotFound();
+        if (!Authorization.AssociationAccess.CanAccess(CurrentRole, CurrentUserId, assoc)) return Forbid();
+
+        // API-key integrators can't read the subscription directly; the client falls back to the
+        // managed-orgs planId + public /plans catalog, so this is a positive confirmation either way.
+        var features = await vocdoni.GetSubscriptionFeaturesAsync(assoc.VocdoniOrgAddress, ct);
+        return new AssociationFeaturesResponse(features.Anonymous);
+    }
+
+    /// <summary>
     /// Removes an association: deletes the Vocdoni managed org (cascade — members, censuses,
     /// processes, bundles) and reclaims integrator quota, then drops its proposals and owner login
     /// from this app. Blocked with 409 if the org still has active on-chain elections — close the
