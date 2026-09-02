@@ -280,3 +280,28 @@ public sealed class SubscriptionFeatures
     /// <summary>Gates blind-CSP (and zk) anonymous elections. Publish fails asynchronously without it.</summary>
     public bool Anonymous { get; set; }
 }
+
+/// <summary>Subset of GET /integrator/organizations (paginated) we read: each managed org's planId.</summary>
+public sealed class ManagedOrganizationsResponse
+{
+    public List<ManagedOrganizationInfo> Organizations { get; set; } = new();
+    public Pagination? Pagination { get; set; }
+}
+
+public sealed class ManagedOrganizationInfo
+{
+    public string? Address { get; set; }
+    public ManagedOrgSubscription? Subscription { get; set; }
+}
+
+public sealed class ManagedOrgSubscription
+{
+    public string? PlanId { get; set; }
+}
+
+/// <summary>Subset of the public GET /plans catalog: plan id (matches subscription.planId) + features.</summary>
+public sealed class VocdoniPlan
+{
+    public string? Id { get; set; }
+    public SubscriptionFeatures? Features { get; set; }
+}

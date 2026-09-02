@@ -129,12 +129,41 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         return resp;
     }
 
-    /// <summary>Reads the org's subscription plan features; a missing plan reads as all-off.</summary>
+    /// <summary>Reads the org's subscription plan features; a missing plan reads as all-off.
+    /// The subscription endpoint is JWT-only upstream (403 code 40157 for API keys), so on 403 the
+    /// features are positively confirmed the key-compatible way instead: the managed-orgs list
+    /// (managed:read) carries the org's planId, joined with the public /plans catalog.</summary>
     public async Task<SubscriptionFeatures> GetSubscriptionFeaturesAsync(string orgAddress, CancellationToken ct = default)
     {
-        var info = await SendAsync<OrganizationSubscriptionInfo>(
-            HttpMethod.Get, $"/organizations/{orgAddress}/subscription", null, ct);
-        return info.Plan?.Features ?? new SubscriptionFeatures();
+        try
+        {
+            var info = await SendAsync<OrganizationSubscriptionInfo>(
+                HttpMethod.Get, $"/organizations/{orgAddress}/subscription", null, ct);
+            return info.Plan?.Features ?? new SubscriptionFeatures();
+        }
+        catch (VocdoniApiException e) when (e.Status == HttpStatusCode.Forbidden)
+        {
+            var planId = await FindManagedOrgPlanIdAsync(orgAddress, ct);
+            if (string.IsNullOrEmpty(planId)) return new SubscriptionFeatures();
+            var plans = await SendAsync<List<VocdoniPlan>>(HttpMethod.Get, "/plans", null, ct);
+            return plans.FirstOrDefault(p => string.Equals(p.Id, planId, StringComparison.Ordinal))
+                ?.Features ?? new SubscriptionFeatures();
+        }
+    }
+
+    /// <summary>Walks the paginated managed-orgs list to find one org's subscription planId.</summary>
+    private async Task<string?> FindManagedOrgPlanIdAsync(string orgAddress, CancellationToken ct)
+    {
+        for (var page = 1; ; page++)
+        {
+            var resp = await SendAsync<ManagedOrganizationsResponse>(
+                HttpMethod.Get, $"/integrator/organizations?page={page}&limit=100", null, ct);
+            var org = resp.Organizations.FirstOrDefault(o =>
+                string.Equals(o.Address, orgAddress, StringComparison.OrdinalIgnoreCase));
+            if (org is not null) return org.Subscription?.PlanId;
+            if (resp.Organizations.Count == 0 || resp.Pagination is not { } p || p.CurrentPage >= p.LastPage)
+                return null;
+        }
     }
 
     /// <summary>Polls GET /jobs/{id} until the async transaction completes; throws on failure or timeout.</summary>

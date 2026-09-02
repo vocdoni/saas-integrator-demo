@@ -176,6 +176,38 @@ public class VocdoniClientTests
     }
 
     [Fact]
+    public async Task GetSubscriptionFeatures_resolves_via_managed_orgs_and_plans_on_403()
+    {
+        // The subscription read is JWT-only upstream (403/40157 for API keys). Positive confirmation
+        // instead: managed-orgs list carries the org's planId; the public /plans catalog carries the
+        // plan's features. Address matching is case-insensitive (hex).
+        var handler = new SequenceHandler(
+            (HttpStatusCode.Forbidden, """{"error":"API keys are not permitted for this endpoint","code":40157}"""),
+            (HttpStatusCode.OK, """{"organizations":[{"address":"0xABC","subscription":{"planId":"prod_free"}}],"pagination":{"currentPage":1,"lastPage":1}}"""),
+            (HttpStatusCode.OK, """[{"id":"prod_pro","features":{"anonymous":false}},{"id":"prod_free","features":{"anonymous":true}}]"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var features = await client.GetSubscriptionFeaturesAsync("0xabc");
+
+        Assert.True(features.Anonymous);
+        Assert.Equal(3, handler.Calls);
+        Assert.Equal("/plans", handler.Paths[^1]);
+    }
+
+    [Fact]
+    public async Task GetSubscriptionFeatures_reads_unknown_org_or_plan_as_all_off_on_403()
+    {
+        // Org missing from the managed list ⇒ no planId ⇒ all-off (never optimistic).
+        var handler = new SequenceHandler(
+            (HttpStatusCode.Forbidden, """{"code":40157}"""),
+            (HttpStatusCode.OK, """{"organizations":[{"address":"0xother","subscription":{"planId":"prod_free"}}],"pagination":{"currentPage":1,"lastPage":1}}"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        Assert.False((await client.GetSubscriptionFeaturesAsync("0xabc")).Anonymous);
+        Assert.Equal(2, handler.Calls); // /plans never fetched without a planId
+    }
+
+    [Fact]
     public async Task CreateVotingProcess_sends_census_anonymous_only_when_set()
     {
         var handler = new CapturingHandler(HttpStatusCode.OK, """{"processId":"6a42"}""");
