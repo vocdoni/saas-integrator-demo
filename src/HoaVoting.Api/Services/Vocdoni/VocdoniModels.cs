@@ -106,7 +106,9 @@ public sealed class VotingProcessQuestionRequest
     public string Type { get; set; } = "singlechoice";
     /// <summary>Null ⇒ omitted: ranked derives everything from the choices and rejects a non-empty typeSetup.</summary>
     public QuestionTypeSetup? TypeSetup { get; set; }
-    /// <summary>Raw vote-type override (wins over type/typeSetup) — used for ranked/approval/quadratic.</summary>
+    /// <summary>Raw on-chain protocol. Since #638 we author questions through named types only and
+    /// never send this: the backend derives the protocol, and a supplied one that contradicts the
+    /// named type (e.g. ranked/cumulative shapes) is rejected with a 400. Present on reads.</summary>
     public BallotProtocol? BallotProtocol { get; set; }
     public bool SecretUntilTheEnd { get; set; }
     /// <summary>Per-question eligibility subset ⊆ census. NB: keyed "census" in the question JSON.</summary>

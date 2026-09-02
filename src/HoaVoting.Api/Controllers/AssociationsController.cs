@@ -114,8 +114,19 @@ public class AssociationsController(AppDbContext db, IVocdoniClient vocdoni) : A
         if (assoc is null) return NotFound();
         if (!Authorization.AssociationAccess.CanAccess(CurrentRole, CurrentUserId, assoc)) return Forbid();
 
-        var features = await vocdoni.GetSubscriptionFeaturesAsync(assoc.VocdoniOrgAddress, ct);
-        return new AssociationFeaturesResponse(features.Anonymous);
+        try
+        {
+            var features = await vocdoni.GetSubscriptionFeaturesAsync(assoc.VocdoniOrgAddress, ct);
+            return new AssociationFeaturesResponse(features.Anonymous);
+        }
+        catch (VocdoniApiException e) when (e.Status == System.Net.HttpStatusCode.Forbidden)
+        {
+            // The subscription read is JWT-only upstream (code 40157) — an integrator authenticating
+            // with an API key can never see the plan. Report the feature as available rather than
+            // hiding it forever: a plan that truly lacks it still fails the publish (as before).
+            // ponytail: optimistic fallback — replace if the API ever exposes features to keys.
+            return new AssociationFeaturesResponse(true);
+        }
     }
 
     /// <summary>

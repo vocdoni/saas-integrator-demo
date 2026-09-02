@@ -173,20 +173,35 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
     }
 
     // Upstream 409 body: {code, error, data:{signedMemberIds:[...]}} — 40173 = voter already signed for.
+    // Every read is guarded by ValueKind: the body is upstream input, and JsonElement getters throw
+    // InvalidOperationException (not JsonException) on a mismatched kind — an unexpected-but-valid
+    // JSON shape must still yield a 409, never a 500.
     internal static EligibilityConflictResponse ParseEligibilityConflict(string body)
     {
         try
         {
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
-            var code = root.TryGetProperty("code", out var c) ? c.GetInt32() : 0;
-            var msg = root.TryGetProperty("error", out var er) ? er.GetString() ?? "" : "";
-            if (code == 40173 && root.TryGetProperty("data", out var data)
-                && data.TryGetProperty("signedMemberIds", out var ids))
+            var code = root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("code", out var c)
+                && c.ValueKind == JsonValueKind.Number
+                && c.TryGetInt32(out var parsed) ? parsed : 0;
+            var msg = root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("error", out var er)
+                && er.ValueKind == JsonValueKind.String ? er.GetString() ?? "" : "";
+            if (code == 40173)
             {
+                var ids = root.TryGetProperty("data", out var data)
+                    && data.ValueKind == JsonValueKind.Object
+                    && data.TryGetProperty("signedMemberIds", out var arr)
+                    && arr.ValueKind == JsonValueKind.Array
+                        ? arr.EnumerateArray()
+                            .Where(x => x.ValueKind == JsonValueKind.String)
+                            .Select(x => x.GetString()!).Where(s => s != "").ToList()
+                        : [];
                 return new EligibilityConflictResponse(
                     "These members have already voted (or hold a ballot signature) and cannot lose eligibility while the question is running.",
-                    ids.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s != "").ToList());
+                    ids);
             }
             return new EligibilityConflictResponse(msg == "" ? "The eligibility change was rejected." : msg, []);
         }

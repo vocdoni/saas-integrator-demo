@@ -89,4 +89,29 @@ public class QuestionMappingTests
         var garbage = ProposalsController.ParseEligibilityConflict("not json");
         Assert.Empty(garbage.SignedMemberIds);
     }
+
+    [Fact]
+    public void ParseEligibilityConflict_survives_valid_json_of_the_wrong_shape()
+    {
+        // JsonElement getters throw InvalidOperationException on a mismatched ValueKind — any of
+        // these used to escape the JsonException catch and turn the handled 409 into a 500.
+        foreach (var body in new[]
+        {
+            """{"code":"40173","error":"member already signed"}""",                       // string code
+            """{"code":40173,"data":{"signedMemberIds":"m1"}}""",                          // ids not an array
+            """{"code":40173,"data":"nope"}""",                                            // data not an object
+            """{"code":40173,"error":42}""",                                               // error not a string
+            """[1,2,3]""",                                                                 // root not an object
+        })
+        {
+            var conflict = ProposalsController.ParseEligibilityConflict(body);
+            Assert.NotNull(conflict.Message);
+            Assert.Empty(conflict.SignedMemberIds);
+        }
+
+        // Mixed element kinds: keep the strings, drop the rest.
+        var mixed = ProposalsController.ParseEligibilityConflict(
+            """{"code":40173,"data":{"signedMemberIds":[1,"m2",null,"m3"]}}""");
+        Assert.Equal(["m2", "m3"], mixed.SignedMemberIds);
+    }
 }
