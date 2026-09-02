@@ -8,8 +8,9 @@ import { buildVoteTransaction, EphemeralSigner } from '@vocdoni/api-voting'
 // were on chain and the rest were not — no rollback, no retry — so a failure half-voted the ballot.
 // The batch is validated and enqueued all or nothing, which closes that window.
 //
-// `answers` = [{ upstreamId, choices }] — `choices` is the on-chain ballot array for that question:
-// single → [chosenIndex]; multiple → [v0..vN-1] (1 per pick); ranked → [v0..vN-1] (unique rank values).
+// `answers` = [{ upstreamId, choices, memo? }] — `choices` is the on-chain ballot array for that
+// question (single → [chosenIndex]; multiple → [v0..vN-1] (1 per pick); ranked → [v0..vN-1] unique
+// ranks); `memo` is the optional free-text note attached when the open "Other" choice is picked (#577).
 //
 // Returns one outcome per answered question, in `answers` order:
 //   [{ upstreamId, ok, voteID, error }]
@@ -26,7 +27,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
   //    signed envelope. Still one CSP round trip per question — the batch collapses the relays and
   //    the job polls, not the signatures. Nothing is relayed in this phase.
   const envelopes = []
-  for (const { upstreamId, choices } of answers) {
+  for (const { upstreamId, choices, memo } of answers) {
     const signer = new EphemeralSigner()
     const { signature, weight } = await client.processes.sign(processId, {
       authToken,
@@ -35,6 +36,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
     })
     envelopes.push({
       upstreamId,
+      // `memo` (free-text on the open choice, #577) rides in VoteEnvelope.memo; omitted when absent.
       txPayload: buildVoteTransaction({
         processId: upstreamId,
         choices,
@@ -42,6 +44,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
         signer,
         cspSignature: signature,
         cspWeight: weight,
+        ...(memo ? { memo } : {}),
       }),
     })
   }

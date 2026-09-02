@@ -11,7 +11,8 @@ const short = (s) => (s ? `${s.slice(0, 10)}…${s.slice(-6)}` : '')
 const ONE_DAY = 864e5
 const plusDay = (localStr) => toLocalInput(new Date(new Date(localStr).getTime() + ONE_DAY))
 
-const blankQuestion = () => ({ title: '', choices: ['Yes', 'No'], kind: 'single' })
+// openIndex = the choice marked as the free-text "Other" option (#577), or -1. Single-choice only.
+const blankQuestion = () => ({ title: '', choices: ['Yes', 'No'], kind: 'single', openIndex: -1 })
 const blankForm = () => {
   const start = toLocalInput(new Date())
   return { title: '', description: '', startDate: start, endDate: plusDay(start), questions: [blankQuestion()] }
@@ -54,7 +55,16 @@ export default function Proposals({ assoc }) {
   const removeQuestion = (qi) => setForm((f) => ({ ...f, questions: f.questions.filter((_, i) => i !== qi) }))
   const setChoice = (qi, ci, v) => updateQ(qi, (q) => ({ ...q, choices: q.choices.map((c, j) => (j === ci ? v : c)) }))
   const addChoice = (qi) => updateQ(qi, (q) => ({ ...q, choices: [...q.choices, ''] }))
-  const removeChoice = (qi, ci) => updateQ(qi, (q) => ({ ...q, choices: q.choices.filter((_, j) => j !== ci) }))
+  // Removing a choice shifts indices — keep openIndex pointing at the same choice (or clear it).
+  const removeChoice = (qi, ci) =>
+    updateQ(qi, (q) => ({
+      ...q,
+      choices: q.choices.filter((_, j) => j !== ci),
+      openIndex: ci === q.openIndex ? -1 : ci < q.openIndex ? q.openIndex - 1 : q.openIndex,
+    }))
+  // Kind selector: an open "Other" choice is single-choice only, so clear it when leaving single.
+  const setKind = (qi, kind) => updateQ(qi, (q) => ({ ...q, kind, openIndex: kind === 'single' ? q.openIndex : -1 }))
+  const toggleOpen = (qi, ci) => updateQ(qi, (q) => ({ ...q, openIndex: q.openIndex === ci ? -1 : ci }))
 
   async function create(e) {
     e.preventDefault()
@@ -64,7 +74,10 @@ export default function Proposals({ assoc }) {
       const questions = form.questions.map((q) => ({
         title: q.title.trim(),
         kind: q.kind,
-        choices: q.choices.map((c) => c.trim()).filter(Boolean),
+        // Carry the "open" flag on each choice, then drop empties (open rides the surviving object).
+        choices: q.choices
+          .map((title, i) => ({ title: title.trim(), open: q.kind === 'single' && i === q.openIndex }))
+          .filter((c) => c.title),
       }))
       if (questions.some((q) => !q.title)) throw new Error('Every question needs a title.')
       if (questions.some((q) => q.choices.length < 2)) throw new Error('Every question needs at least two choices.')
@@ -75,7 +88,7 @@ export default function Proposals({ assoc }) {
           description: form.description,
           startDate: new Date(form.startDate).toISOString(),
           endDate: new Date(form.endDate).toISOString(),
-          questions: questions.map((q) => ({ title: q.title, kind: q.kind, choices: q.choices.map((title) => ({ title })) })),
+          questions,
         },
       })
       setForm(blankForm())
@@ -169,6 +182,12 @@ export default function Proposals({ assoc }) {
                   {q.choices.map((c, ci) => (
                     <div key={ci} className="choice-row">
                       <input value={c} onChange={(e) => setChoice(qi, ci, e.target.value)} placeholder={`Choice ${ci + 1}`} />
+                      {q.kind === 'single' && (
+                        <label className="check small" title="Voters who pick this choice attach a free-text answer">
+                          <input type="checkbox" checked={q.openIndex === ci} onChange={() => toggleOpen(qi, ci)} />
+                          <span>Other</span>
+                        </label>
+                      )}
                       {q.choices.length > 2 && (
                         <button type="button" className="link danger" onClick={() => removeChoice(qi, ci)}>×</button>
                       )}
@@ -179,7 +198,7 @@ export default function Proposals({ assoc }) {
                 <fieldset className="vote-type">
                   {KINDS.map(([value, title]) => (
                     <label key={value} className="check">
-                      <input type="radio" name={`kind-${qi}`} checked={q.kind === value} onChange={() => setQuestion(qi, { kind: value })} />
+                      <input type="radio" name={`kind-${qi}`} checked={q.kind === value} onChange={() => setKind(qi, value)} />
                       <span>{title}</span>
                     </label>
                   ))}
@@ -233,6 +252,14 @@ export default function Proposals({ assoc }) {
                           {q.status && <span className={`status s-${q.status.toLowerCase()}`}>{q.status}</span>}
                         </div>
                         <QuestionResults q={q} />
+                        {q.memos?.length > 0 && (
+                          <div className="memos">
+                            <span className="eyebrow">Free-text answers ({q.memos.length})</span>
+                            <ul>
+                              {q.memos.map((m, mi) => <li key={mi}>{m}</li>)}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
