@@ -1,6 +1,6 @@
 # saas-backend sync (Sep → Nov 2026): design
 
-Status: audited   Class: architectural
+Status: approved (2026-11-20)   Class: architectural
 Owner decisions so far (2026-11-20): fix everything broken + show pricing/wallet, extend end date,
 member password credential; deliver as one PR on `feature/saas-demo` with a linked issue.
 
