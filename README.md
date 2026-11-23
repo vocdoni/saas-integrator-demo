@@ -143,7 +143,7 @@ cd web && npm install && npm run dev   # http://localhost:5173
 
 ## Test
 
-**Backend tests** (88/88 pass):
+**Backend tests** (90/90 pass):
 
 ```bash
 docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test

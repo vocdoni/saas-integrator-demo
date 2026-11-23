@@ -30,7 +30,7 @@ not in this repo.
 
 ```bash
 docker compose up --build          # api :5095, web :3000 (proxies /api). Migrates + seeds on boot.
-dotnet test                         # 88 tests. No local .NET? run in a container:
+dotnet test                         # 90 tests. No local .NET? run in a container:
   docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test
 dotnet test --filter <TestName>     # single test
 cd web && npm install && npm run dev # SPA hot reload :5173 (Vite proxies /api → :5095; needs api up)
