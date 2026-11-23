@@ -71,7 +71,7 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             Questions = req.Questions.Select(ToQuestionRequest).ToList(),
         };
 
-        var created = await vocdoni.CreateVotingProcessAsync(request, ct);
+        var created = await vocdoni.CreateVotingProcessAsync(request, CancellationToken.None); // a disconnect must not orphan the draft
 
         // From here on upstream holds a draft: record it before publishing (and whatever happens next)
         // with CancellationToken.None, so a client disconnect cannot leave it untracked.
@@ -137,8 +137,8 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
 
     /// <summary>
     /// Delete a proposal stuck publishing (Draft) or whose publish failed (Failed): upstream draft first
-    /// (200 or 404 → the local row goes too, 204). Any other upstream answer — typically 409 because a
-    /// publish submitted elections — propagates as 502 and the row stays (Retry publish resolves those).
+    /// (200 or 404 → the local row goes too, 204). Any other upstream answer propagates as 502 and the row
+    /// stays; a 409 on a Draft (a publish submitted elections) turns it Failed so Retry publish resolves it.
     /// </summary>
     [HttpDelete("{id:int}")]
     public async Task<ActionResult> Delete(int associationId, int id, CancellationToken ct)
@@ -156,6 +156,15 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             await vocdoni.DeleteVotingProcessAsync(p.VocdoniProcessId, ct);
         }
         catch (VocdoniApiException e) when (e.Status == HttpStatusCode.NotFound) { /* already gone upstream */ }
+        catch (VocdoniApiException e) when (e.Status == HttpStatusCode.Conflict && p.Status == ProposalStatus.Draft)
+        {
+            // Upstream holds elections a publish submitted (40903/40904): only publishing again resolves it,
+            // so surface the row as Failed to expose Retry publish (which adopts them at no new charge).
+            p.Status = ProposalStatus.Failed;
+            p.PublishError = UpstreamErrors.Describe(e).Detail;
+            await db.SaveChangesAsync(CancellationToken.None);
+            throw;
+        }
 
         db.Proposals.Remove(p);
         await db.SaveChangesAsync(CancellationToken.None);

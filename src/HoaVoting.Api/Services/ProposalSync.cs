@@ -30,7 +30,7 @@ internal static class ProposalSync
         string? jobId;
         try
         {
-            jobId = await vocdoni.PublishVotingProcessAsync(p.VocdoniProcessId, ct);
+            jobId = await vocdoni.PublishVotingProcessAsync(p.VocdoniProcessId, CancellationToken.None); // money side effect: a disconnect must not lose its answer
         }
         catch (VocdoniApiException e)
         {
@@ -52,7 +52,8 @@ internal static class ProposalSync
             {
                 job = await vocdoni.WaitForJobAsync(jobId, ct);
             }
-            catch (Exception e) when (e is VocdoniApiException or HttpRequestException)
+            catch (Exception e) when (e is VocdoniApiException or HttpRequestException
+                                      || (e is OperationCanceledException && !ct.IsCancellationRequested))
             {
                 return PublishOutcome.Pending; // job id is stored; the reconcile follows it
             }
@@ -73,7 +74,8 @@ internal static class ProposalSync
         {
             proc = await vocdoni.GetVotingProcessAsync(p.VocdoniProcessId, ct);
         }
-        catch (Exception e) when (e is VocdoniApiException or HttpRequestException)
+        catch (Exception e) when (e is VocdoniApiException or HttpRequestException
+                                  || (e is OperationCanceledException && !ct.IsCancellationRequested))
         {
             return PublishOutcome.Pending; // published but not read back: the reconcile promotes it
         }

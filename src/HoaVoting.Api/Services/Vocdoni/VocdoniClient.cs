@@ -149,7 +149,7 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
     /// <summary>Changes question status (e.g. "ended"); a null/empty <paramref name="questionIds"/> targets all published questions.</summary>
     // ponytail: fire-and-forget — we enqueue the status change and return without waiting for the
     // async job, so the caller's request stays fast. The real per-question status is reconciled from
-    // GET /processes/{id}/results on the next read (ProposalsController.HydrateAsync). A rejected
+    // GET /processes/{id} on the next read (ProposalSync.ReconcileAsync). A rejected
     // enqueue still surfaces: SendCoreAsync throws VocdoniApiException on any non-2xx.
     public Task SetQuestionsStatusAsync(string processId, string status, List<string>? questionIds = null, CancellationToken ct = default)
     {

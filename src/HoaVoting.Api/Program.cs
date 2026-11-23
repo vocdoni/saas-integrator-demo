@@ -86,5 +86,5 @@ await DbSeeder.SeedAsync(app.Services, app.Configuration);
 
 app.Run();
 
-// Exposed for WebApplicationFactory in integration tests.
+// Public so tests can reference the entry assembly.
 public partial class Program;

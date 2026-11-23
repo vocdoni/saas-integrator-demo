@@ -107,6 +107,18 @@ public class ProposalLifecycleTests : ControllerTestBase
     }
 
     [Fact]
+    public async Task Create_whose_job_wait_times_out_answers_202_with_a_Draft()
+    {
+        Vocdoni.OnWaitForJob = _ => throw new TaskCanceledException("HttpClient.Timeout elapsed");
+
+        var res = await Proposals().Create(Assoc.Id, Request(), default);
+
+        Assert.Equal(202, StatusOf(res));
+        var p = Saved(ValueOf(res)!.Id);
+        Assert.Equal((ProposalStatus.Draft, "job1"), (p.Status, p.PublishJobId));
+    }
+
+    [Fact]
     public async Task Create_already_published_skips_the_job()
     {
         Vocdoni.OnPublish = _ => null; // 200: already published
@@ -351,7 +363,26 @@ public class ProposalLifecycleTests : ControllerTestBase
 
         // Propagates → Program.cs answers 502.
         await Assert.ThrowsAsync<VocdoniApiException>(() => Proposals().Delete(Assoc.Id, p.Id, default));
-        Assert.Equal(ProposalStatus.Draft, Saved(p.Id).Status);
+        var saved = Saved(p.Id);
+        Assert.Equal(ProposalStatus.Failed, saved.Status); // Retry publish is now offered
+        Assert.Equal("refused", saved.PublishError);
+
+        Vocdoni.OnGetProcess = id => PublishedProcess(id, "ready");
+        Assert.Equal(200, StatusOf(await Proposals().Publish(Assoc.Id, p.Id, default)));
+        Assert.Equal(ProposalStatus.Open, Saved(p.Id).Status);
+    }
+
+    [Fact]
+    public async Task Delete_of_a_Failed_proposal_refused_by_upstream_stays_Failed()
+    {
+        var p = SeedProposal(ProposalStatus.Failed, published: false);
+        p.PublishError = "out of funds";
+        Db.SaveChanges();
+        Vocdoni.OnDeleteProcess = _ => throw Refused(HttpStatusCode.Conflict, 40903);
+
+        await Assert.ThrowsAsync<VocdoniApiException>(() => Proposals().Delete(Assoc.Id, p.Id, default));
+        var saved = Saved(p.Id);
+        Assert.Equal((ProposalStatus.Failed, "out of funds"), (saved.Status, saved.PublishError));
     }
 
     [Fact]
