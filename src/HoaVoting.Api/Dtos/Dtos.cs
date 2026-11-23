@@ -17,9 +17,21 @@ public record AddHomeownerRequest(
     string? Email,          // optional member contact detail
     string? Phone,
     string MemberNumber,
-    string? Weight);
+    string? Weight,
+    // Client hash of the member's password (saas-backend #760): 64 lowercase hex, computed in the
+    // browser with hashMemberPassword(orgAddress, password). The plaintext never reaches this backend.
+    string? PasswordHash = null);
 
-public record HomeownerResponse(string Id, string Name, string? Surname, string Email, string? MemberNumber, string? Weight);
+public record HomeownerResponse(string Id, string Name, string? Surname, string Email, string? MemberNumber, string? Weight, bool HasPassword = false);
+
+public record SetPasswordRequest(string PasswordHash);
+
+// Estimated pay-per-process price of a proposal over the current homeowners (saas-backend #819).
+public record PriceResponse(int Voters, int TotalCents, string Currency, bool QuoteRecommended, bool QuoteRequired);
+
+// Integrator status for the admin page. BalanceCents/Currency are null when unknown (no managed org yet,
+// or the API key cannot read the wallet).
+public record IntegratorResponse(bool CanCreateManagedOrg, int ManagedOrgsCreated, long? BalanceCents, string? Currency);
 
 // A proposal is a multi-question voting process (saas-backend #571). Voters always auth by member
 // number (no 2FA); each question is its own on-chain election.

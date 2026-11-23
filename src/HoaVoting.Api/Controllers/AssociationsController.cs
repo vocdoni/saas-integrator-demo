@@ -101,6 +101,27 @@ public class AssociationsController(AppDbContext db, IVocdoniClient vocdoni) : A
     }
 
     /// <summary>
+    /// Estimated pay-per-process price (saas-backend #819) of a proposal over the current homeowners —
+    /// only those with a password when <paramref name="requirePassword"/>, since the others are left out
+    /// of a password census. Paid from the integrator wallet at publish. Upstream needs voters ≥ 1, so
+    /// zero voters answers locally.
+    /// </summary>
+    [HttpGet("{id:int}/price")]
+    public async Task<ActionResult<PriceResponse>> Price(int id, [FromQuery] bool requirePassword, CancellationToken ct)
+    {
+        var assoc = await db.Associations.FindAsync([id], ct);
+        if (assoc is null) return NotFound();
+        if (!Authorization.AssociationAccess.CanAccess(CurrentRole, CurrentUserId, assoc)) return Forbid();
+
+        var members = await vocdoni.ListMembersAsync(assoc.VocdoniOrgAddress, ct);
+        var voters = members.Count(m => m.Id is not null && (!requirePassword || m.HasPassword));
+        if (voters == 0) return new PriceResponse(0, 0, "eur", false, false);
+
+        var price = await vocdoni.GetPriceAsync(voters, ct);
+        return new PriceResponse(voters, price.TotalCents, price.Currency ?? "eur", price.QuoteRecommended, price.QuoteRequired);
+    }
+
+    /// <summary>
     /// Removes an association: deletes the Vocdoni managed org (cascade — members, censuses,
     /// processes, bundles) and reclaims integrator quota, then drops its proposals and owner login
     /// from this app. Blocked with 409 if the org still has active on-chain elections — close the
