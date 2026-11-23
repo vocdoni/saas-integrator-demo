@@ -30,7 +30,9 @@ public record CreateProposalRequest(
     DateTimeOffset EndDate,
     List<QuestionInput> Questions,
     // Blind-CSP anonymous voting (saas-backend #641), on every plan (#718).
-    bool Anonymous = false);
+    bool Anonymous = false,
+    // Voters also enter their password (saas-backend #760); homeowners without one are left out.
+    bool RequirePassword = false);
 
 public record QuestionInput(
     string Title,
@@ -56,7 +58,12 @@ public record ProposalResponse(
     DateTimeOffset EndDate,
     DateTimeOffset CreatedAt,
     List<QuestionResponse> Questions,
-    bool Anonymous = false);
+    bool Anonymous = false,
+    bool RequirePassword = false,
+    // Status Failed only: why the publish failed (readable upstream text).
+    string? PublishError = null,
+    // Create response only: homeowners left out of the census for missing auth data (e.g. no password).
+    List<string>? MissingData = null);
 
 public record QuestionResponse(
     int Id,
@@ -96,7 +103,11 @@ public record VotingInfoResponse(
     string Status,
     List<PublicQuestion> Questions,
     // Blind-CSP anonymous process (saas-backend #641) — the page picks the blind-signature flow.
-    bool Anonymous = false);
+    bool Anonymous = false,
+    // Password census (saas-backend #760): the page asks for it and hashes it with OrgAddress in the
+    // browser (hashMemberPassword) — the plaintext never reaches this backend.
+    bool RequirePassword = false,
+    string OrgAddress = "");
 
 public record PublicQuestion(
     int Id,
@@ -118,6 +129,8 @@ public record PublicQuestion(
     // Cumulative only: the allocator UI needs the budget + cost model.
     int? Budget = null,
     int? CostExponent = null);
+
+public record SetEndDateRequest(DateTimeOffset EndDate);
 
 // Live per-question eligibility (saas-backend #621). MemberIds is the COMPLETE desired list
 // (Vocdoni member ids); [] reopens the question to the whole census.
