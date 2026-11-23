@@ -10,13 +10,23 @@ const toLocalInput = (d) =>
 const short = (s) => (s ? `${s.slice(0, 10)}…${s.slice(-6)}` : '')
 const ONE_DAY = 864e5
 const plusDay = (localStr) => toLocalInput(new Date(new Date(localStr).getTime() + ONE_DAY))
+const euros = (cents) => `€${(cents / 100).toFixed(2)}`
+
+// Pay-per-process estimate (saas-backend #819). Order matters: totalCents 0 with quoteRequired is
+// "no price", not free.
+function priceText(p) {
+  if (p.voters === 0) return 'No eligible homeowners.'
+  if (p.quoteRequired) return 'Over 50 000 voters: this proposal needs a custom quote from Vocdoni.'
+  if (p.totalCents === 0) return `Free (${p.voters} voters).`
+  return `Estimated cost: ${euros(p.totalCents)} for ${p.voters} voters, paid from the integrator wallet.`
+}
 
 // openIndex = the choice marked as the free-text "Other" option (#577), or -1. Single-choice only.
 // budget/costExponent apply to cumulative questions only (costExponent 2 = quadratic).
 const blankQuestion = () => ({ title: '', choices: ['Yes', 'No'], kind: 'single', openIndex: -1, budget: 10, costExponent: 1 })
 const blankForm = () => {
   const start = toLocalInput(new Date())
-  return { title: '', description: '', startDate: start, endDate: plusDay(start), questions: [blankQuestion()], anonymous: false }
+  return { title: '', description: '', startDate: start, endDate: plusDay(start), questions: [blankQuestion()], anonymous: false, requirePassword: false }
 }
 
 const KINDS = [
@@ -31,8 +41,11 @@ export default function Proposals({ assoc }) {
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState(blankForm())
   const [error, setError] = useState('')
+  const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [closing, setClosing] = useState(() => new Set()) // proposal ids with a pending close
+  const [price, setPrice] = useState(null)
+  const [retrying, setRetrying] = useState(null) // proposal id with a retry in flight
 
   const base = `/associations/${assoc.id}/proposals`
 
@@ -49,6 +62,27 @@ export default function Proposals({ assoc }) {
   useEffect(() => {
     load()
   }, [assoc.id])
+  const refresh = () => api(base).then(setItems).catch(() => {}) // no "Loading…" flicker
+
+  // Re-priced when the password toggle changes: a password census leaves out homeowners without one.
+  useEffect(() => {
+    let stale = false
+    setPrice(null)
+    api(`/associations/${assoc.id}/price?requirePassword=${form.requirePassword}`)
+      .then((p) => stale || setPrice(p))
+      .catch(() => {})
+    return () => {
+      stale = true
+    }
+  }, [assoc.id, form.requirePassword])
+
+  // A publish can outlive the create request (202 + Draft): refetch until no proposal is publishing.
+  const publishing = items.some((p) => p.status === 'Draft')
+  useEffect(() => {
+    if (!publishing) return
+    const id = setInterval(refresh, 5000)
+    return () => clearInterval(id)
+  }, [publishing, base])
 
   // Question + choice editing (functional updates — no stale closures).
   const updateQ = (qi, fn) => setForm((f) => ({ ...f, questions: f.questions.map((q, i) => (i === qi ? fn(q) : q)) }))
@@ -71,6 +105,7 @@ export default function Proposals({ assoc }) {
   async function create(e) {
     e.preventDefault()
     setError('')
+    setNote('')
     setBusy(true)
     try {
       const questions = form.questions.map((q) => ({
@@ -85,7 +120,8 @@ export default function Proposals({ assoc }) {
       if (questions.some((q) => !q.title)) throw new Error('Every question needs a title.')
       if (questions.some((q) => q.choices.length < 2)) throw new Error('Every question needs at least two choices.')
       if (questions.some((q) => q.kind === 'cumulative' && !(q.budget > 0))) throw new Error('Cumulative questions need a budget of at least 1.')
-      await api(base, {
+      // 201 (Open) and 202 (Draft, still publishing) look alike through api(): read the status.
+      const created = await api(base, {
         method: 'POST',
         body: {
           title: form.title,
@@ -94,15 +130,54 @@ export default function Proposals({ assoc }) {
           endDate: new Date(form.endDate).toISOString(),
           questions,
           anonymous: form.anonymous,
+          requirePassword: form.requirePassword,
         },
       })
+      const left = created?.missingData?.length ?? 0
+      setNote(
+        [
+          created?.status === 'Draft' ? 'Publishing continues on chain; the list updates once it is live.' : '',
+          left ? `${left} homeowners were left out of this proposal (missing data, e.g. no password). Setting it later does not add them.` : '',
+        ].filter(Boolean).join(' '),
+      )
       setForm(blankForm())
       await load()
     } catch (e) {
       setError(e.message)
+      // A 502/504 can still leave a row behind (Failed, or Draft when the outcome is unknown): show it,
+      // so the owner retries or deletes it instead of creating a duplicate.
+      await refresh()
     } finally {
       setBusy(false)
     }
+  }
+
+  // Draft: only when publishing is stuck. Failed: upstream may refuse (409) if elections were submitted —
+  // Retry publish resolves those.
+  async function remove(p) {
+    const msg = p.status === 'Draft'
+      ? 'Delete this proposal? Only do this if publishing is stuck.'
+      : 'Delete this proposal and its upstream draft?'
+    if (!confirm(msg)) return
+    setError('')
+    try {
+      await api(`${base}/${p.id}`, { method: 'DELETE' })
+    } catch (e) {
+      setError(e.message)
+    }
+    await refresh()
+  }
+
+  async function retry(p) {
+    setError('')
+    setRetrying(p.id)
+    try {
+      await api(`${base}/${p.id}/publish`, { method: 'POST' })
+    } catch (e) {
+      setError(e.message)
+    }
+    await refresh()
+    setRetrying(null)
   }
 
   const unmarkClosing = (pid) =>
@@ -241,9 +316,15 @@ export default function Proposals({ assoc }) {
             <input type="checkbox" checked={form.anonymous} onChange={(e) => setForm({ ...form, anonymous: e.target.checked })} />
             <span>Anonymous voting</span>
           </label>
+          <label className="check" title="Voters also enter the password set for them in the memberbase.">
+            <input type="checkbox" checked={form.requirePassword} onChange={(e) => setForm({ ...form, requirePassword: e.target.checked })} />
+            <span>Require a password (homeowners without one are left out)</span>
+          </label>
+          {price && <p className="helper">{priceText(price)}</p>}
 
           {error && <div className="error">{error}</div>}
-          <button disabled={busy}>{busy ? 'Publishing… (~10–30s)' : 'Create & publish'}</button>
+          {note && <div className="note">{note}</div>}
+          <button disabled={busy}>{busy ? 'Publishing…' : 'Create & publish'}</button>
         </form>
       </section>
 
@@ -259,8 +340,12 @@ export default function Proposals({ assoc }) {
         ) : (
           <ul className="proposals">
             {items.map((p) => {
-              const finished = isFinished(p)
-              const status = finished ? 'Closed' : p.status
+              // Draft (publishing) and Failed never reached the chain: isFinished's end-date rule
+              // only applies to live proposals.
+              const live = p.status === 'Open' || p.status === 'Closed'
+              const finished = live && isFinished(p)
+              const open = p.status === 'Open' && !finished
+              const status = p.status === 'Draft' ? 'Publishing…' : finished ? 'Closed' : p.status
               return (
                 <li key={p.id}>
                   <div className="p-head">
@@ -268,17 +353,29 @@ export default function Proposals({ assoc }) {
                     <div className="p-actions">
                       {closing.has(p.id) ? (
                         <span className="status s-closing">Closing… ⟳</span>
-                      ) : (
-                        !finished && <button className="link danger" onClick={() => close(p.id)}>Close</button>
-                      )}
+                      ) : open ? (
+                        <button className="link danger" onClick={() => close(p.id)}>Close</button>
+                      ) : retrying === p.id ? (
+                        <span className="status s-closing">Publishing… ⟳</span>
+                      ) : p.status === 'Failed' ? (
+                        <>
+                          <button className="link" onClick={() => retry(p)}>Retry publish</button>
+                          <button className="link danger" onClick={() => remove(p)}>Delete</button>
+                        </>
+                      ) : p.status === 'Draft' ? (
+                        <button className="link danger" onClick={() => remove(p)}>Delete</button>
+                      ) : null}
                     </div>
                   </div>
                   {p.description && <p className="p-desc small">{p.description}</p>}
                   <div className="p-meta">
-                    <span className={`status s-${status.toLowerCase()}`}>{status}</span>
+                    <span className={`status s-${finished ? 'closed' : p.status.toLowerCase()}`}>{status}</span>
                     {p.anonymous && <span className="badge-anon">anonymous</span>}
+                    {p.requirePassword && <span className="badge-anon">password</span>}
                     <span className="mono small muted" title={p.vocdoniProcessId}>{short(p.vocdoniProcessId)}</span>
                   </div>
+                  {p.status === 'Failed' && p.publishError && <div className="error small">{p.publishError}</div>}
+                  {open && <EndDateEditor url={`${base}/${p.id}/end-date`} endDate={p.endDate} onChanged={refresh} />}
                   <div className="p-questions">
                     {p.questions.map((q) => (
                       <div key={q.id} className="p-question-block">
@@ -287,8 +384,8 @@ export default function Proposals({ assoc }) {
                           {q.status && <span className={`status s-${q.status.toLowerCase()}`}>{q.status}</span>}
                         </div>
                         <QuestionResults q={q} />
-                        {!finished && q.upstreamId && (
-                          <EligibilityEditor assoc={assoc} proposal={p} q={q} onChanged={() => api(base).then(setItems).catch(() => {})} />
+                        {open && q.upstreamId && (
+                          <EligibilityEditor assoc={assoc} proposal={p} q={q} onChanged={refresh} />
                         )}
                         {q.memos?.length > 0 && (
                           <div className="memos">
@@ -301,7 +398,7 @@ export default function Proposals({ assoc }) {
                       </div>
                     ))}
                   </div>
-                  {p.vocdoniProcessId && <VotingLink processId={p.vocdoniProcessId} />}
+                  {live && p.vocdoniProcessId && <VotingLink processId={p.vocdoniProcessId} />}
                 </li>
               )
             })}
@@ -412,6 +509,44 @@ function EligibilityEditor({ assoc, proposal, q, onChanged }) {
         </div>
       )}
       {err && !open && <div className="error small">{err}</div>}
+    </div>
+  )
+}
+
+// Extend an open proposal's end date (saas-backend #844). The answer carries the stored end: the new one
+// when the chain job finished, the old one while it is still running (the list picks it up later).
+function EndDateEditor({ url, endDate, onChanged }) {
+  const [value, setValue] = useState(() => toLocalInput(new Date(endDate)))
+  const [saving, setSaving] = useState(false)
+  const [info, setInfo] = useState('')
+  const [err, setErr] = useState('')
+
+  async function extend() {
+    setInfo('')
+    setErr('')
+    setSaving(true)
+    try {
+      const res = await api(url, { method: 'PUT', body: { endDate: new Date(value).toISOString() } })
+      if (new Date(res.endDate) < new Date(value)) setInfo('Extension submitted; it shows here once confirmed on chain.')
+      onChanged()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="eligibility">
+      <span className="small muted">
+        Ends{' '}
+        <input type="datetime-local" value={value} onChange={(e) => setValue(e.target.value)} />{' '}
+        <button type="button" className="link" disabled={saving} onClick={extend}>
+          {saving ? 'Extending…' : 'Extend'}
+        </button>
+      </span>
+      {info && <div className="small muted">{info}</div>}
+      {err && <div className="error small">{err}</div>}
     </div>
   )
 }

@@ -48,6 +48,7 @@ export default function VotingPage({ processId }) {
   const [error, setError] = useState('')
   const [answers, setAnswers] = useState({}) // questionId → { selected: number[], order: number[] }
   const [memberNumber, setMemberNumber] = useState('')
+  const [password, setPassword] = useState('')
   const [casting, setCasting] = useState(false)
   const [voteErr, setVoteErr] = useState('')
   const [cast, setCast] = useState(null) // [{ upstreamId, voteID }] once cast
@@ -123,13 +124,22 @@ export default function VotingPage({ processId }) {
         processId: info.processId,
         chainId: info.chainId,
         memberNumber: memberNumber.trim(),
+        // Password census (#760): voting.js hashes it with the org address; the plaintext stays here.
+        ...(info.requirePassword ? { password, orgAddress: info.orgAddress } : {}),
         anonymous: info.anonymous,
         answers: payload,
       })
       setCast(results)
       await reload()
     } catch (e) {
-      setVoteErr(e.message || 'Could not cast the vote.')
+      // A wrong password answers like an unknown member (40802); step 0 is budgeted per hour (40017).
+      setVoteErr(
+        e.code === 40802
+          ? info.requirePassword ? 'Check your member number and password.' : 'Authentication failed — check your member number.'
+          : e.code === 40017
+            ? 'Too many attempts, try again later.'
+            : e.message || 'Could not cast the vote.',
+      )
     } finally {
       setCasting(false)
     }
@@ -236,9 +246,22 @@ export default function VotingPage({ processId }) {
               required
             />
           </label>
+          {info.requirePassword && (
+            <label>
+              Password
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Your voting password"
+                required
+              />
+            </label>
+          )}
 
           {voteErr && <div className="error">{voteErr}</div>}
-          <button disabled={casting || !memberNumber.trim() || !allAnswered}>
+          <button disabled={casting || !memberNumber.trim() || (info.requirePassword && !password.trim()) || !allAnswered}>
             {casting ? 'Casting vote…' : `Cast vote${info.questions.length === 1 ? '' : 's'}`}
           </button>
         </form>

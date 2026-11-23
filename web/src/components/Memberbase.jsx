@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
+import { hashMemberPassword } from '@vocdoni/api-client'
 import { api } from '../api.js'
+
+// Member passwords (saas-backend #760) are hashed here, in the browser, with the org address; only the
+// 64-hex hash goes to the backend. hashMemberPassword throws on a blank password or outside a secure
+// context (HTTPS or localhost) — its message is shown as is.
+const hashFor = (assoc, password) => hashMemberPassword(assoc.vocdoniOrgAddress, password)
 
 export default function Memberbase({ assoc }) {
   const [members, setMembers] = useState([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState({ name: '', memberNumber: '', email: '' })
+  const [form, setForm] = useState({ name: '', memberNumber: '', email: '', password: '' })
+  const [pwFor, setPwFor] = useState(null) // member id whose password is being set
+  const [pw, setPw] = useState('')
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -34,13 +42,27 @@ export default function Memberbase({ assoc }) {
     try {
       const body = { name: form.name, memberNumber: form.memberNumber }
       if (form.email) body.email = form.email
+      if (form.password) body.passwordHash = await hashFor(assoc, form.password)
       await api(base, { method: 'POST', body })
-      setForm({ name: '', memberNumber: '', email: '' })
+      setForm({ name: '', memberNumber: '', email: '', password: '' })
       await load()
     } catch (e) {
       setError(e.message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function savePassword(id) {
+    setError('')
+    try {
+      const passwordHash = await hashFor(assoc, pw)
+      await api(`${base}/${id}/password`, { method: 'PUT', body: { passwordHash } })
+      setPwFor(null)
+      setPw('')
+      await load()
+    } catch (e) {
+      setError(e.message)
     }
   }
 
@@ -101,6 +123,10 @@ export default function Memberbase({ assoc }) {
             Email (optional)
             <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </label>
+          <label>
+            Password (optional, for proposals that require one)
+            <input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          </label>
           <button disabled={busy}>Add</button>
         </form>
 
@@ -128,14 +154,30 @@ export default function Memberbase({ assoc }) {
         ) : (
           <table>
             <thead>
-              <tr><th>Name</th><th>Member #</th><th></th></tr>
+              <tr><th>Name</th><th>Member #</th><th>Password</th><th></th></tr>
             </thead>
             <tbody>
               {members.map((m) => (
                 <tr key={m.id}>
                   <td>{m.name}</td>
                   <td>{m.memberNumber}</td>
+                  <td>{m.hasPassword ? '✓ set' : '—'}</td>
                   <td>
+                    {pwFor === m.id ? (
+                      <form
+                        className="inline"
+                        onSubmit={(e) => {
+                          e.preventDefault()
+                          savePassword(m.id)
+                        }}
+                      >
+                        <input type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password" required autoFocus />
+                        <button className="link">Save</button>
+                        <button type="button" className="link" onClick={() => setPwFor(null)}>Cancel</button>
+                      </form>
+                    ) : (
+                      <button className="link" onClick={() => { setPwFor(m.id); setPw('') }}>Set password</button>
+                    )}{' '}
                     <button className="link danger" onClick={() => remove(m.id)}>Remove</button>
                   </td>
                 </tr>
