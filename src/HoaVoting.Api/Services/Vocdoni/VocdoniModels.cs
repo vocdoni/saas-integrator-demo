@@ -262,26 +262,9 @@ public sealed class UpdateQuestionCensusResponse
     public int Removed { get; set; }
 }
 
-// --- organization subscription (plan feature gating) ------------------------
+// --- integrator ------------------------------------------------------------
 
-/// <summary>Subset of GET /organizations/{org}/subscription we read.</summary>
-public sealed class OrganizationSubscriptionInfo
-{
-    public SubscriptionPlan? Plan { get; set; }
-}
-
-public sealed class SubscriptionPlan
-{
-    public SubscriptionFeatures? Features { get; set; }
-}
-
-public sealed class SubscriptionFeatures
-{
-    /// <summary>Gates blind-CSP (and zk) anonymous elections. Publish fails asynchronously without it.</summary>
-    public bool Anonymous { get; set; }
-}
-
-/// <summary>Subset of GET /integrator/organizations (paginated) we read: each managed org's planId.</summary>
+/// <summary>Subset of GET /integrator/organizations (paginated) we read.</summary>
 public sealed class ManagedOrganizationsResponse
 {
     public List<ManagedOrganizationInfo> Organizations { get; set; } = new();
@@ -291,17 +274,4 @@ public sealed class ManagedOrganizationsResponse
 public sealed class ManagedOrganizationInfo
 {
     public string? Address { get; set; }
-    public ManagedOrgSubscription? Subscription { get; set; }
-}
-
-public sealed class ManagedOrgSubscription
-{
-    public string? PlanId { get; set; }
-}
-
-/// <summary>Subset of the public GET /plans catalog: plan id (matches subscription.planId) + features.</summary>
-public sealed class VocdoniPlan
-{
-    public string? Id { get; set; }
-    public SubscriptionFeatures? Features { get; set; }
 }

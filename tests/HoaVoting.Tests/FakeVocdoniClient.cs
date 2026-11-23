@@ -81,10 +81,4 @@ public sealed class FakeVocdoniClient : IVocdoniClient
         Calls.Add($"SetQuestionCensus {processId} {questionId}");
         return Task.FromResult(new UpdateQuestionCensusResponse());
     }
-
-    public Task<SubscriptionFeatures> GetSubscriptionFeaturesAsync(string orgAddress, CancellationToken ct = default)
-    {
-        Calls.Add($"GetSubscriptionFeatures {orgAddress}");
-        return Task.FromResult(new SubscriptionFeatures());
-    }
 }

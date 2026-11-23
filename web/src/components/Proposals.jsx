@@ -33,9 +33,6 @@ export default function Proposals({ assoc }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [closing, setClosing] = useState(() => new Set()) // proposal ids with a pending close
-  // Anonymous voting is plan-gated upstream and publish fails opaquely without it — fetch the flag
-  // (best-effort: an unreachable read just leaves the toggle disabled).
-  const [anonymousAllowed, setAnonymousAllowed] = useState(false)
 
   const base = `/associations/${assoc.id}/proposals`
 
@@ -51,9 +48,6 @@ export default function Proposals({ assoc }) {
   }
   useEffect(() => {
     load()
-    api(`/associations/${assoc.id}/features`)
-      .then((f) => setAnonymousAllowed(!!f?.anonymousVoting))
-      .catch(() => setAnonymousAllowed(false))
   }, [assoc.id])
 
   // Question + choice editing (functional updates — no stale closures).
@@ -243,19 +237,9 @@ export default function Proposals({ assoc }) {
             <button type="button" className="link" onClick={addQuestion}>+ Add question</button>
           </div>
 
-          <label
-            className="check"
-            title={anonymousAllowed
-              ? 'Blind-signature voting: the census authority cannot link voters to ballots.'
-              : 'Anonymous voting is not included in this organization’s plan.'}
-          >
-            <input
-              type="checkbox"
-              checked={form.anonymous}
-              disabled={!anonymousAllowed}
-              onChange={(e) => setForm({ ...form, anonymous: e.target.checked })}
-            />
-            <span>Anonymous voting{anonymousAllowed ? '' : ' (not in your plan)'}</span>
+          <label className="check" title="Blind-signature voting: the census authority cannot link voters to ballots.">
+            <input type="checkbox" checked={form.anonymous} onChange={(e) => setForm({ ...form, anonymous: e.target.checked })} />
+            <span>Anonymous voting</span>
           </label>
 
           {error && <div className="error">{error}</div>}

@@ -29,7 +29,7 @@ public record CreateProposalRequest(
     DateTimeOffset StartDate,
     DateTimeOffset EndDate,
     List<QuestionInput> Questions,
-    // Blind-CSP anonymous voting (saas-backend #641). Plan-gated: check /features first.
+    // Blind-CSP anonymous voting (saas-backend #641), on every plan (#718).
     bool Anonymous = false);
 
 public record QuestionInput(
@@ -118,9 +118,6 @@ public record PublicQuestion(
     // Cumulative only: the allocator UI needs the budget + cost model.
     int? Budget = null,
     int? CostExponent = null);
-
-/// <summary>Plan features relevant to the admin UI (from the org's Vocdoni subscription).</summary>
-public record AssociationFeaturesResponse(bool AnonymousVoting);
 
 // Live per-question eligibility (saas-backend #621). MemberIds is the COMPLETE desired list
 // (Vocdoni member ids); [] reopens the question to the whole census.

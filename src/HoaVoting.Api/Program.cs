@@ -63,8 +63,10 @@ app.UseExceptionHandler(eh => eh.Run(async ctx =>
     var ex = ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
     if (ex is VocdoniApiException or HttpRequestException)
     {
+        // Readable sentence for the billing/limit codes, else upstream's own error text (UpstreamErrors).
+        var (code, detail) = UpstreamErrors.Describe(ex);
         ctx.Response.StatusCode = StatusCodes.Status502BadGateway;
-        await ctx.Response.WriteAsJsonAsync(new { error = "vocdoni_upstream", detail = ex.Message });
+        await ctx.Response.WriteAsJsonAsync(new { error = "vocdoni_upstream", code, detail });
     }
     else
     {
