@@ -1,10 +1,13 @@
 namespace HoaVoting.Api.Models;
 
+// Stored as int: append only. Draft = created upstream, publish not confirmed yet; Failed = the
+// publish was refused or its job failed (PublishError says why) — retry or delete it.
 public enum ProposalStatus
 {
     Draft,
     Open,
     Closed,
+    Failed,
 }
 
 /// <summary>
@@ -31,6 +34,16 @@ public class Proposal
     /// <summary>Blind-CSP anonymous voting (saas-backend #641): the CSP cannot link voters to ballots.
     /// Set at creation; the public voting page uses it to pick the blind-signature flow.</summary>
     public bool Anonymous { get; set; }
+
+    /// <summary>Census auth also needs the member's password (saas-backend #760); members without one
+    /// are left out of the census at creation.</summary>
+    public bool RequirePassword { get; set; }
+
+    /// <summary>Upstream publish job, stored as soon as it is enqueued so the reconcile can follow it.</summary>
+    public string? PublishJobId { get; set; }
+
+    /// <summary>Why the publish failed (readable upstream text); set only while Status is Failed.</summary>
+    public string? PublishError { get; set; }
 
     public List<ProposalQuestion> Questions { get; set; } = new();
 

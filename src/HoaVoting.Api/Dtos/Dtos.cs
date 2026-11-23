@@ -17,9 +17,21 @@ public record AddHomeownerRequest(
     string? Email,          // optional member contact detail
     string? Phone,
     string MemberNumber,
-    string? Weight);
+    string? Weight,
+    // Client hash of the member's password (saas-backend #760): 64 lowercase hex, computed in the
+    // browser with hashMemberPassword(orgAddress, password). The plaintext never reaches this backend.
+    string? PasswordHash = null);
 
-public record HomeownerResponse(string Id, string Name, string? Surname, string Email, string? MemberNumber, string? Weight);
+public record HomeownerResponse(string Id, string Name, string? Surname, string Email, string? MemberNumber, string? Weight, bool HasPassword = false);
+
+public record SetPasswordRequest(string PasswordHash);
+
+// Estimated pay-per-process price of a proposal over the current homeowners (saas-backend #819).
+public record PriceResponse(int Voters, int TotalCents, string Currency, bool QuoteRecommended, bool QuoteRequired);
+
+// Integrator status for the admin page. BalanceCents/Currency are null when unknown (no managed org yet,
+// or the API key cannot read the wallet).
+public record IntegratorResponse(bool CanCreateManagedOrg, int ManagedOrgsCreated, long? BalanceCents, string? Currency);
 
 // A proposal is a multi-question voting process (saas-backend #571). Voters always auth by member
 // number (no 2FA); each question is its own on-chain election.
@@ -29,8 +41,10 @@ public record CreateProposalRequest(
     DateTimeOffset StartDate,
     DateTimeOffset EndDate,
     List<QuestionInput> Questions,
-    // Blind-CSP anonymous voting (saas-backend #641). Plan-gated: check /features first.
-    bool Anonymous = false);
+    // Blind-CSP anonymous voting (saas-backend #641), on every plan (#718).
+    bool Anonymous = false,
+    // Voters also enter their password (saas-backend #760); homeowners without one are left out.
+    bool RequirePassword = false);
 
 public record QuestionInput(
     string Title,
@@ -56,7 +70,12 @@ public record ProposalResponse(
     DateTimeOffset EndDate,
     DateTimeOffset CreatedAt,
     List<QuestionResponse> Questions,
-    bool Anonymous = false);
+    bool Anonymous = false,
+    bool RequirePassword = false,
+    // Status Failed only: why the publish failed (readable upstream text).
+    string? PublishError = null,
+    // Create response only: homeowners left out of the census for missing auth data (e.g. no password).
+    List<string>? MissingData = null);
 
 public record QuestionResponse(
     int Id,
@@ -96,7 +115,11 @@ public record VotingInfoResponse(
     string Status,
     List<PublicQuestion> Questions,
     // Blind-CSP anonymous process (saas-backend #641) — the page picks the blind-signature flow.
-    bool Anonymous = false);
+    bool Anonymous = false,
+    // Password census (saas-backend #760): the page asks for it and hashes it with OrgAddress in the
+    // browser (hashMemberPassword) — the plaintext never reaches this backend.
+    bool RequirePassword = false,
+    string OrgAddress = "");
 
 public record PublicQuestion(
     int Id,
@@ -119,8 +142,7 @@ public record PublicQuestion(
     int? Budget = null,
     int? CostExponent = null);
 
-/// <summary>Plan features relevant to the admin UI (from the org's Vocdoni subscription).</summary>
-public record AssociationFeaturesResponse(bool AnonymousVoting);
+public record SetEndDateRequest(DateTimeOffset EndDate);
 
 // Live per-question eligibility (saas-backend #621). MemberIds is the COMPLETE desired list
 // (Vocdoni member ids); [] reopens the question to the whole census.

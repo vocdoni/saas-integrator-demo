@@ -57,7 +57,16 @@ step "Guard: unauthenticated create → 401"
 req POST /api/associations "{\"name\":\"x\",\"ownerEmail\":\"x@x\",\"ownerPassword\":\"x\"}"
 [ "$HTTP" = 401 ] && ok "401" || bad "expected 401, got $HTTP"
 
-# --- 3. find-or-create association (integrator free plan caps managed orgs, so reuse) ------
+# --- 2b. integrator wallet + managed-org cap (saas-backend #819) -------------
+step "Integrator status"
+req GET /api/integrator "" "$ADMIN_TOKEN"
+if [ "$HTTP" = 200 ]; then
+  ok "canCreateManagedOrg=$(j "$BODY" .canCreateManagedOrg), managedOrgsCreated=$(j "$BODY" .managedOrgsCreated), balance=$(j "$BODY" '.balanceCents // "unavailable"') $(j "$BODY" '.currency // ""')"
+else
+  bad "integrator HTTP $HTTP — $BODY (the API key needs quota:read)"
+fi
+
+# --- 3. find-or-create association (managed-org creation is capped until the wallet is topped up, so reuse) ------
 # This e2e owns its test associations and always uses the same owner password, so a reused
 # association can be logged into. A fresh account creates one; later runs reuse it.
 step "Find or create association"
@@ -73,8 +82,9 @@ else
   if [ "$HTTP" = 201 ]; then
     ASSOC_ID=$(j "$BODY" .id); ORG=$(j "$BODY" .vocdoniOrgAddress)
     ok "created association id=$ASSOC_ID, vocdoni org=$ORG"
-  elif printf '%s' "$BODY" | grep -q 40154; then
-    # Integrator managed-org quota is full — adopt an existing managed org instead.
+  elif [ "$(j "$BODY" .code)" = 40184 ]; then
+    # Upstream 402 (40184, surfaced by the API as 502 + code): no more managed orgs until the integrator
+    # wallet is topped up — adopt an existing managed org instead.
     ORG=$(curl -s -m 15 "$VOCDONI_SERVER_URL/integrator/organizations" \
       -H "Authorization: Bearer $VOCDONI_API_TOKEN" | jq -r '.organizations[0].address // empty')
     [ -n "$ORG" ] || die "managed-org quota full and no existing org to adopt"
@@ -133,17 +143,31 @@ COUNT=$(printf '%s' "$BODY" | jq 'length' 2>/dev/null)
 [ "$HTTP" = 200 ] && ok "200, count=$COUNT" || bad "list HTTP $HTTP — $BODY"
 
 # --- 8. owner creates a multi-question proposal (Vocdoni #571: authored + batch-published) ------
-# Publish is an async on-chain batch (one election per question); this step waits for it (~10-30s).
+# Publish is an async on-chain batch (one election per question), paid from the integrator wallet
+# (free up to 25 voters, saas-backend #819). The API waits ~40 s: 201 = Open, 202 = still publishing,
+# in which case this polls the proposal until the read-side reconcile reports Open (or Failed).
 START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 END=$(date -u -v+7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+7 days' +%Y-%m-%dT%H:%M:%SZ)
 step "Create proposal (2 questions: single + multiple; waits for batch publish)"
 req POST "/api/associations/$ASSOC_ID/proposals" \
   "{\"title\":\"Building decisions\",\"description\":\"E2E proposal\",\"startDate\":\"$START\",\"endDate\":\"$END\",\"questions\":[{\"title\":\"Repaint the lobby?\",\"kind\":\"single\",\"choices\":[{\"title\":\"Yes\"},{\"title\":\"No\"}]},{\"title\":\"Which upgrades?\",\"kind\":\"multiple\",\"choices\":[{\"title\":\"Elevator\"},{\"title\":\"Garden\"},{\"title\":\"Gym\"}]}]}" "$OWNER_TOKEN"
-if [ "$HTTP" = 201 ]; then
-  PROP_ID=$(j "$BODY" .id); PROC=$(j "$BODY" .vocdoniProcessId)
-  QN=$(printf '%s' "$BODY" | jq '.questions | length'); UP=$(printf '%s' "$BODY" | jq -r '.questions[0].upstreamId')
-  ok "201 — proposal id=$PROP_ID, process=$PROC, $QN questions, q1 upstreamId=${UP:0:12}…"
-  [ -n "$UP" ] && [ "$UP" != "null" ] && ok "questions published (have on-chain ids)" || bad "questions missing upstreamId — batch publish incomplete"
+if [ "$HTTP" = 201 ] || [ "$HTTP" = 202 ]; then
+  PROP_ID=$(j "$BODY" .id); PROC=$(j "$BODY" .vocdoniProcessId); STATUS=$(j "$BODY" .status)
+  ok "$HTTP — proposal id=$PROP_ID, process=$PROC, status=$STATUS"
+  for _ in $(seq 1 90); do   # up to 15 min: a stalled chain keeps the publish job pending
+    [ "$STATUS" = Draft ] || break
+    sleep 10
+    req GET "/api/associations/$ASSOC_ID/proposals/$PROP_ID" "" "$OWNER_TOKEN"
+    STATUS=$(j "$BODY" .status)
+  done
+  case "$STATUS" in
+    Open)
+      QN=$(printf '%s' "$BODY" | jq '.questions | length'); UP=$(printf '%s' "$BODY" | jq -r '.questions[0].upstreamId')
+      ok "Open — $QN questions, q1 upstreamId=${UP:0:12}…"
+      [ -n "$UP" ] && [ "$UP" != "null" ] && ok "questions published (have on-chain ids)" || bad "questions missing upstreamId — batch publish incomplete" ;;
+    Failed) bad "publish failed: $(j "$BODY" .publishError)"; PROP_ID="" ;;
+    *) bad "proposal still $STATUS after 15 min"; PROP_ID="" ;;
+  esac
 else
   bad "create proposal HTTP $HTTP — $BODY"; PROP_ID=""
 fi

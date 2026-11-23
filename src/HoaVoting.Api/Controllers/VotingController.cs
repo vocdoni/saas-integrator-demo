@@ -1,6 +1,8 @@
 using System.Text.Json;
 using HoaVoting.Api.Data;
 using HoaVoting.Api.Dtos;
+using HoaVoting.Api.Models;
+using HoaVoting.Api.Services;
 using HoaVoting.Api.Services.Vocdoni;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,20 +20,15 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
     [HttpGet("{processId}")]
     public async Task<ActionResult<VotingInfoResponse>> Get(string processId, CancellationToken ct)
     {
-        var p = await db.Proposals.Include(x => x.Questions)
+        var p = await db.Proposals.Include(x => x.Questions).Include(x => x.Association)
             .SingleOrDefaultAsync(x => x.VocdoniProcessId == processId, ct);
         if (p is null) return NotFound();
 
-        // Live per-question status + inline tally (saas-backend #596), best-effort (page still renders if unreachable).
-        var byUpstream = new Dictionary<string, VotingProcessQuestion>();
-        try
-        {
-            var proc = await vocdoni.GetVotingProcessAsync(processId, ct);
-            foreach (var q in proc.Questions)
-                if (!string.IsNullOrEmpty(q.UpstreamId)) byUpstream[q.UpstreamId!] = q;
-        }
-        catch (VocdoniApiException) { /* serve stored values */ }
-        catch (HttpRequestException) { }
+        // Same reconcile as the owner reads (promotes a published Draft, copies an extended end date, live
+        // per-question status + inline tally, #596), best-effort: the page still renders if unreachable.
+        var byUpstream = await ProposalSync.ReconcileAsync(vocdoni, p, ct);
+        await ProposalSync.SaveAsync(db);
+        if (p.Status is ProposalStatus.Draft or ProposalStatus.Failed) return NotFound(); // nothing to vote on yet
 
         var opts = vocdoniOptions.Value;
         // The page calls the SaaS API from the browser, so hand it the browser-reachable URL (BrowserUrl),
@@ -47,13 +44,14 @@ public class VotingController(AppDbContext db, IVocdoniClient vocdoni, IOptions<
             return new PublicQuestion(
                 q.Id, q.Order, q.Title,
                 JsonSerializer.Deserialize<List<string>>(q.ChoicesJson) ?? [],
-                q.Kind, q.OpenChoiceIndex, q.UpstreamId, pq?.Status ?? q.Status,
+                q.Kind, q.OpenChoiceIndex, q.UpstreamId, q.Status,
                 qr?.VoteCount ?? 0, qr?.MaxVoters ?? 0, qr?.Results,
                 q.Budget, q.CostExponent);
         }).ToList();
 
         return new VotingInfoResponse(
             p.VocdoniProcessId, apiUrl, p.ChainId, p.Title, p.Description,
-            p.StartDate, p.EndDate, p.Status.ToString(), questions, p.Anonymous);
+            p.StartDate, p.EndDate, p.Status.ToString(), questions, p.Anonymous,
+            p.RequirePassword, p.Association!.VocdoniOrgAddress);
     }
 }

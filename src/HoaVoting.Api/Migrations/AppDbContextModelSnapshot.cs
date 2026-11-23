@@ -15,7 +15,7 @@ namespace HoaVoting.Api.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
 
             modelBuilder.Entity("HoaVoting.Api.Models.AppUser", b =>
                 {
@@ -97,6 +97,15 @@ namespace HoaVoting.Api.Migrations
 
                     b.Property<DateTimeOffset>("EndDate")
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("PublishError")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PublishJobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("RequirePassword")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTimeOffset>("StartDate")
                         .HasColumnType("TEXT");

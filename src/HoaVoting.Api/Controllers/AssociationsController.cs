@@ -101,23 +101,24 @@ public class AssociationsController(AppDbContext db, IVocdoniClient vocdoni) : A
     }
 
     /// <summary>
-    /// Plan features relevant to the admin UI. Fetched lazily by the proposal form (not folded into
-    /// the association reads, which would put an upstream call on every page load): anonymous voting
-    /// is plan-gated upstream and its publish fails asynchronously + opaquely on unsupported plans,
-    /// so the UI disables the toggle instead.
+    /// Estimated pay-per-process price (saas-backend #819) of a proposal over the current homeowners —
+    /// only those with a password when <paramref name="requirePassword"/>, since the others are left out
+    /// of a password census. Paid from the integrator wallet at publish. Upstream needs voters ≥ 1, so
+    /// zero voters answers locally.
     /// </summary>
-    [Authorize]
-    [HttpGet("{id:int}/features")]
-    public async Task<ActionResult<AssociationFeaturesResponse>> Features(int id, CancellationToken ct)
+    [HttpGet("{id:int}/price")]
+    public async Task<ActionResult<PriceResponse>> Price(int id, [FromQuery] bool requirePassword, CancellationToken ct)
     {
         var assoc = await db.Associations.FindAsync([id], ct);
         if (assoc is null) return NotFound();
         if (!Authorization.AssociationAccess.CanAccess(CurrentRole, CurrentUserId, assoc)) return Forbid();
 
-        // API-key integrators can't read the subscription directly; the client falls back to the
-        // managed-orgs planId + public /plans catalog, so this is a positive confirmation either way.
-        var features = await vocdoni.GetSubscriptionFeaturesAsync(assoc.VocdoniOrgAddress, ct);
-        return new AssociationFeaturesResponse(features.Anonymous);
+        var members = await vocdoni.ListMembersAsync(assoc.VocdoniOrgAddress, ct);
+        var voters = members.Count(m => m.Id is not null && (!requirePassword || m.HasPassword));
+        if (voters == 0) return new PriceResponse(0, 0, "eur", false, false);
+
+        var price = await vocdoni.GetPriceAsync(voters, ct);
+        return new PriceResponse(voters, price.TotalCents, price.Currency ?? "eur", price.QuoteRecommended, price.QuoteRequired);
     }
 
     /// <summary>

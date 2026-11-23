@@ -1,8 +1,10 @@
+using System.Net;
 using System.Text.Json;
 using HoaVoting.Api.Authorization;
 using HoaVoting.Api.Data;
 using HoaVoting.Api.Dtos;
 using HoaVoting.Api.Models;
+using HoaVoting.Api.Services;
 using HoaVoting.Api.Services.Vocdoni;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,11 +16,15 @@ namespace HoaVoting.Api.Controllers;
 [Route("api/associations/{associationId:int}/proposals")]
 public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiControllerBase
 {
+    private const int MaxQuestions = 15;
+    private static readonly TimeSpan MaxDuration = TimeSpan.FromDays(90);
+
     /// <summary>
     /// Create a proposal as a Vocdoni multi-question voting process (saas-backend #571): author the
-    /// process (census inline over the current homeowners, one election per question), publish it
-    /// (async batch), then read it back to capture each question's on-chain election id + status.
-    /// Voters cast per question client-side.
+    /// process (census inline over the current homeowners, one election per question), save the local
+    /// row as Draft, then run the publish routine (<see cref="ProposalSync.PublishAsync"/>). 201 + Open
+    /// when the publish job finished within the bounded poll, 202 + Draft while it is still running (the
+    /// reconcile promotes it later), 502 when upstream refused or the job failed.
     /// </summary>
     [HttpPost]
     public async Task<ActionResult<ProposalResponse>> Create(int associationId, CreateProposalRequest req, CancellationToken ct)
@@ -26,6 +32,9 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var (assoc, error) = await ResolveAsync(associationId, ct);
         if (error is not null) return error;
         if (req.Questions is null || req.Questions.Count == 0) return BadRequest("A proposal needs at least one question.");
+        // Upstream limits (saas-backend #819): 15 questions per process, 90-day processes.
+        if (req.Questions.Count > MaxQuestions) return BadRequest($"A proposal can have at most {MaxQuestions} questions.");
+        if (req.EndDate - req.StartDate > MaxDuration) return BadRequest($"A proposal can run for at most {MaxDuration.TotalDays} days.");
         if (req.Questions.Any(q => q.Choices.Count < 2)) return BadRequest("Each question needs at least two choices.");
         // An open "Other" choice (free-text voter memo, #577) is single-choice-only, at most one per question.
         foreach (var (q, qi) in req.Questions.Select((q, i) => (q, i)))
@@ -46,9 +55,15 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var request = new CreateVotingProcessRequest
         {
             OrgAddress = org,
-            // Auth-only census over the current homeowners (authenticate by member number, no 2FA).
+            // Auth-only census over the current homeowners (member number, plus the member's password when
+            // required — saas-backend #760; members without one land in missingData). No 2FA.
             // Anonymous (saas-backend #641) swaps the CSP to blind signatures; omitted when false.
-            Census = new CensusSpec { AuthFields = ["memberNumber"], MemberIds = memberIds, Anonymous = req.Anonymous ? true : null },
+            Census = new CensusSpec
+            {
+                AuthFields = req.RequirePassword ? ["memberNumber", "password"] : ["memberNumber"],
+                MemberIds = memberIds,
+                Anonymous = req.Anonymous ? true : null,
+            },
             Title = Lang(req.Title),
             Description = Lang(req.Description),
             StartDate = req.StartDate.UtcDateTime.ToString("o"),
@@ -56,22 +71,21 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             Questions = req.Questions.Select(ToQuestionRequest).ToList(),
         };
 
-        var processId = await vocdoni.CreateVotingProcessAsync(request, ct);
-        await vocdoni.PublishVotingProcessAsync(processId, ct);
-        // Read back to capture each question's on-chain id + status (assigned during the batch publish).
-        var published = await vocdoni.GetVotingProcessAsync(processId, ct);
+        var created = await vocdoni.CreateVotingProcessAsync(request, CancellationToken.None); // a disconnect must not orphan the draft
 
+        // From here on upstream holds a draft: record it before publishing (and whatever happens next)
+        // with CancellationToken.None, so a client disconnect cannot leave it untracked.
         var proposal = new Proposal
         {
             AssociationId = assoc.Id,
             Title = req.Title,
             Description = req.Description,
-            VocdoniProcessId = processId,
-            ChainId = published.ChainId ?? "",
+            VocdoniProcessId = created.ProcessId!,
             Anonymous = req.Anonymous,
+            RequirePassword = req.RequirePassword,
             StartDate = req.StartDate,
             EndDate = req.EndDate,
-            Status = ProposalStatus.Open,
+            Status = ProposalStatus.Draft,
             CreatedAt = DateTimeOffset.UtcNow,
             Questions = req.Questions.Select((q, i) => new ProposalQuestion
             {
@@ -82,14 +96,19 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
                 Kind = q.Kind,
                 Budget = q.Kind == VotingType.Cumulative ? q.Budget : null,
                 CostExponent = q.Kind == VotingType.Cumulative ? q.CostExponent : null,
-                UpstreamId = published.Questions.ElementAtOrDefault(i)?.UpstreamId ?? "",
-                Status = published.Questions.ElementAtOrDefault(i)?.Status ?? "",
             }).ToList(),
         };
         db.Proposals.Add(proposal);
-        await db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(CancellationToken.None);
 
-        return CreatedAtAction(nameof(Get), new { associationId, id = proposal.Id }, ToResponse(proposal));
+        var outcome = await ProposalSync.PublishAsync(db, vocdoni, proposal, deleteOnRefusal: true, ct);
+        var body = ToResponse(proposal, missingData: created.MissingData);
+        return outcome switch
+        {
+            PublishOutcome.Open => CreatedAtAction(nameof(Get), new { associationId, id = proposal.Id }, body),
+            PublishOutcome.Pending => Accepted(body),
+            _ => UpstreamFailure(proposal.PublishError!),
+        };
     }
 
     [HttpGet]
@@ -110,17 +129,80 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         var (_, error) = await ResolveAsync(associationId, ct);
         if (error is not null) return error;
 
-        var p = await db.Proposals.Include(x => x.Questions)
-            .SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
+        var p = await FindAsync(associationId, id, ct);
         if (p is null) return NotFound();
         var results = await HydrateAsync([p], ct);
         return ToResponse(p, results.GetValueOrDefault(p.Id));
     }
 
     /// <summary>
+    /// Delete a proposal stuck publishing (Draft) or whose publish failed (Failed): upstream draft first
+    /// (200 or 404 → the local row goes too, 204). Any other upstream answer propagates as 502 and the row
+    /// stays; a 409 on a Draft (a publish submitted elections) turns it Failed so Retry publish resolves it.
+    /// </summary>
+    [HttpDelete("{id:int}")]
+    public async Task<ActionResult> Delete(int associationId, int id, CancellationToken ct)
+    {
+        var (_, error) = await ResolveAsync(associationId, ct);
+        if (error is not null) return error;
+
+        var p = await FindAsync(associationId, id, ct);
+        if (p is null) return NotFound();
+        if (p.Status is not (ProposalStatus.Draft or ProposalStatus.Failed))
+            return Conflict("Only a proposal that is still publishing or failed to publish can be deleted.");
+
+        try
+        {
+            await vocdoni.DeleteVotingProcessAsync(p.VocdoniProcessId, ct);
+        }
+        catch (VocdoniApiException e) when (e.Status == HttpStatusCode.NotFound) { /* already gone upstream */ }
+        catch (VocdoniApiException e) when (e.Status == HttpStatusCode.Conflict && p.Status == ProposalStatus.Draft)
+        {
+            // Upstream holds elections a publish submitted (40903/40904): only publishing again resolves it,
+            // so surface the row as Failed to expose Retry publish (which adopts them at no new charge).
+            p.Status = ProposalStatus.Failed;
+            p.PublishError = UpstreamErrors.Describe(e).Detail;
+            await db.SaveChangesAsync(CancellationToken.None);
+            throw;
+        }
+
+        db.Proposals.Remove(p);
+        await db.SaveChangesAsync(CancellationToken.None);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Retry the publish of a Failed proposal. Upstream adopts any election a previous attempt already
+    /// mined, at no new charge. Same routine as create, except a refusal marks it Failed again (no delete).
+    /// </summary>
+    [HttpPost("{id:int}/publish")]
+    public async Task<ActionResult<ProposalResponse>> Publish(int associationId, int id, CancellationToken ct)
+    {
+        var (_, error) = await ResolveAsync(associationId, ct);
+        if (error is not null) return error;
+
+        var p = await FindAsync(associationId, id, ct);
+        if (p is null) return NotFound();
+        if (p.Status != ProposalStatus.Failed) return Conflict("Only a proposal whose publish failed can be published again.");
+
+        // Drop the old job too: the reconcile must not fail the retry from the previous attempt's job.
+        p.Status = ProposalStatus.Draft;
+        p.PublishError = null;
+        p.PublishJobId = null;
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        return await ProposalSync.PublishAsync(db, vocdoni, p, deleteOnRefusal: false, ct) switch
+        {
+            PublishOutcome.Open => ToResponse(p),
+            PublishOutcome.Pending => Accepted(ToResponse(p)),
+            _ => UpstreamFailure(p.PublishError!),
+        };
+    }
+
+    /// <summary>
     /// Close voting: enqueue the on-chain end of every question and return immediately (the change is
     /// async). We don't optimistically mark the proposal Closed — the real status is reconciled from
-    /// GET /processes/{id}/results by HydrateAsync once the end tx mines and the questions report ended.
+    /// the process read once the end tx mines and the questions report ended. Open proposals only.
     /// </summary>
     [HttpPost("{id:int}/close")]
     public async Task<ActionResult> Close(int associationId, int id, CancellationToken ct)
@@ -130,9 +212,41 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
 
         var p = await db.Proposals.SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
         if (p is null) return NotFound();
+        if (p.Status != ProposalStatus.Open) return Conflict("Only an open proposal can be closed.");
 
         await vocdoni.SetQuestionsStatusAsync(p.VocdoniProcessId, "ended", null, ct);
         return Accepted();
+    }
+
+    /// <summary>
+    /// Extend an open proposal's end date (saas-backend #844). 200 with the new end once the job
+    /// completed; 202 with the old end while it is still running (the reconcile copies upstream's end
+    /// date later); 502 when it failed. Upstream enforces the 5-minute / 90-day rules (400 → 502).
+    /// </summary>
+    [HttpPut("{id:int}/end-date")]
+    public async Task<ActionResult<ProposalResponse>> SetEndDate(int associationId, int id, SetEndDateRequest req, CancellationToken ct)
+    {
+        var (_, error) = await ResolveAsync(associationId, ct);
+        if (error is not null) return error;
+
+        var p = await FindAsync(associationId, id, ct);
+        if (p is null) return NotFound();
+        if (p.Status != ProposalStatus.Open) return BadRequest("Only an open proposal's end date can be extended.");
+        if (req.EndDate <= p.EndDate) return BadRequest("The new end date must be later than the current one.");
+
+        var jobId = await vocdoni.SetProcessEndDateAsync(p.VocdoniProcessId, req.EndDate, ct);
+        var (state, jobError) = await vocdoni.WaitForJobAsync(jobId, ct);
+        switch (state)
+        {
+            case JobState.Completed:
+                p.EndDate = req.EndDate;
+                await db.SaveChangesAsync(CancellationToken.None);
+                return ToResponse(p);
+            case JobState.Pending:
+                return Accepted(ToResponse(p));
+            default:
+                return UpstreamFailure(string.IsNullOrEmpty(jobError) ? "The end-date change failed." : jobError);
+        }
     }
 
     /// <summary>
@@ -211,45 +325,18 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         }
     }
 
-    // Refresh each proposal's questions from the process read GET /processes/{id} (saas-backend #596:
-    // per-question live status always, plus an inline tally once the question hits "results"), mark the
-    // proposal Closed once every question has ended (or its end date passed), and return each upstream
-    // question (tally + eligibility, #621) keyed by on-chain id for the response. Best-effort per proposal.
+    // Reconcile each proposal with its process read (ProposalSync.ReconcileAsync: settle drafts, end date,
+    // question status, Closed) and return each upstream question (tally + eligibility, #621) keyed by
+    // on-chain id for the response. Best-effort per proposal; one save for the batch.
     private async Task<Dictionary<int, Dictionary<string, VotingProcessQuestion>>> HydrateAsync(
         IReadOnlyList<Proposal> proposals, CancellationToken ct)
     {
         var map = new Dictionary<int, Dictionary<string, VotingProcessQuestion>>();
-        var changed = false;
         foreach (var p in proposals)
-        {
-            var byUpstream = new Dictionary<string, VotingProcessQuestion>();
-            try
-            {
-                var proc = await vocdoni.GetVotingProcessAsync(p.VocdoniProcessId, ct);
-                foreach (var q in proc.Questions)
-                    if (!string.IsNullOrEmpty(q.UpstreamId)) byUpstream[q.UpstreamId!] = q;
-            }
-            catch (VocdoniApiException) { /* not published yet / unreachable — serve stored values */ }
-            catch (HttpRequestException) { }
-
-            foreach (var q in p.Questions)
-            {
-                if (string.IsNullOrEmpty(q.UpstreamId) || !byUpstream.TryGetValue(q.UpstreamId, out var pq)) continue;
-                if (!string.IsNullOrEmpty(pq.Status) && pq.Status != q.Status) { q.Status = pq.Status!; changed = true; }
-            }
-            map[p.Id] = byUpstream;
-
-            if (p.Status != ProposalStatus.Closed)
-            {
-                var ended = (p.Questions.Count > 0 && p.Questions.All(q => IsEnded(q.Status))) || p.EndDate < DateTimeOffset.UtcNow;
-                if (ended) { p.Status = ProposalStatus.Closed; changed = true; }
-            }
-        }
-        if (changed) await db.SaveChangesAsync(ct);
+            map[p.Id] = await ProposalSync.ReconcileAsync(vocdoni, p, ct);
+        await ProposalSync.SaveAsync(db);
         return map;
     }
-
-    private static bool IsEnded(string status) => status.ToUpperInvariant() is "ENDED" or "CANCELED" or "RESULTS";
 
     // Map the demo's UI kind to a #571 question, using the named types only (saas-backend #638).
     // The backend derives the on-chain ballot protocol from type + typeSetup; supplying a protocol that
@@ -285,7 +372,8 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
 
     private static Dictionary<string, string> Lang(string text) => new() { ["default"] = text };
 
-    private static ProposalResponse ToResponse(Proposal p, IReadOnlyDictionary<string, VotingProcessQuestion>? upstream = null)
+    private static ProposalResponse ToResponse(
+        Proposal p, IReadOnlyDictionary<string, VotingProcessQuestion>? upstream = null, List<string>? missingData = null)
     {
         var questions = p.Questions.OrderBy(q => q.Order).Select(q =>
         {
@@ -301,8 +389,16 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
         }).ToList();
         return new ProposalResponse(
             p.Id, p.AssociationId, p.Title, p.Description,
-            p.Status.ToString(), p.VocdoniProcessId, p.StartDate, p.EndDate, p.CreatedAt, questions, p.Anonymous);
+            p.Status.ToString(), p.VocdoniProcessId, p.StartDate, p.EndDate, p.CreatedAt, questions, p.Anonymous,
+            p.RequirePassword, p.PublishError, missingData);
     }
+
+    // Same body shape as Program.cs's mapping of a thrown upstream failure.
+    private ObjectResult UpstreamFailure(string detail) =>
+        StatusCode(StatusCodes.Status502BadGateway, new { error = "vocdoni_upstream", detail });
+
+    private Task<Proposal?> FindAsync(int associationId, int id, CancellationToken ct) =>
+        db.Proposals.Include(x => x.Questions).SingleOrDefaultAsync(x => x.Id == id && x.AssociationId == associationId, ct);
 
     private async Task<(Association?, ActionResult?)> ResolveAsync(int associationId, CancellationToken ct)
     {

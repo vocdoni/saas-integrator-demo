@@ -48,9 +48,9 @@ public class VocdoniClientTests
         var handler = new CapturingHandler(HttpStatusCode.OK, """{"processId":"6a42"}""");
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
-        var id = await client.CreateVotingProcessAsync(new CreateVotingProcessRequest { OrgAddress = "0xabc" });
+        var created = await client.CreateVotingProcessAsync(new CreateVotingProcessRequest { OrgAddress = "0xabc" });
 
-        Assert.Equal("6a42", id);
+        Assert.Equal("6a42", created.ProcessId);
         Assert.Equal(HttpMethod.Post, handler.LastMethod);
         Assert.Equal("/processes", handler.LastPath);
     }
@@ -101,41 +101,155 @@ public class VocdoniClientTests
     }
 
     [Fact]
-    public async Task PublishVotingProcess_polls_job_until_complete()
+    public async Task CreateVotingProcess_returns_missing_data()
     {
-        // 202 enqueue at /processes/{id}/publish → poll the batch-publish job until it completes.
-        var handler = new SequenceHandler(
-            (HttpStatusCode.Accepted, """{"jobId":"job1"}"""),
-            (HttpStatusCode.OK, """{"status":"completed"}"""));
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"processId":"6a42","missingData":["m3"]}""");
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
-        await client.PublishVotingProcessAsync("proc1");
+        var created = await client.CreateVotingProcessAsync(new CreateVotingProcessRequest { OrgAddress = "0xabc" });
 
-        Assert.Equal("/processes/proc1/publish", handler.Paths[0]);
-        Assert.Equal("/jobs/job1", handler.Paths[^1]);
+        Assert.Equal(["m3"], created.MissingData!);
     }
 
     [Fact]
-    public async Task PublishVotingProcess_returns_immediately_when_already_published()
+    public async Task PublishVotingProcess_returns_the_job_without_polling()
     {
-        // 200 idempotent path: no job poll needed.
+        // 202 enqueue → hand the job id back; the caller decides how long to wait (pay-per-process
+        // publish can stay pending for hours).
+        var handler = new SequenceHandler((HttpStatusCode.Accepted, """{"jobId":"job1"}"""));
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        Assert.Equal("job1", await client.PublishVotingProcessAsync("proc1"));
+        Assert.Equal(["/processes/proc1/publish"], handler.Paths);
+    }
+
+    [Fact]
+    public async Task PublishVotingProcess_returns_null_when_already_published()
+    {
         var handler = new SequenceHandler((HttpStatusCode.OK, """{"processId":"proc1"}"""));
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
-        await client.PublishVotingProcessAsync("proc1");
+        Assert.Null(await client.PublishVotingProcessAsync("proc1"));
         Assert.Equal(1, handler.Calls);
     }
 
     [Fact]
-    public async Task PublishVotingProcess_throws_when_job_fails()
+    public async Task PublishVotingProcess_surfaces_a_refusal_with_its_code()
     {
-        var handler = new SequenceHandler(
-            (HttpStatusCode.Accepted, """{"jobId":"job1"}"""),
-            (HttpStatusCode.OK, """{"status":"failed","errors":["out of quota"]}"""));
+        var handler = new SequenceHandler((HttpStatusCode.PaymentRequired,
+            """{"error":"insufficient balance","code":40175,"data":{"requiredCents":1980,"availableCents":0}}"""));
         var client = new VocdoniClient(ClientWithToken(handler, "tok"));
 
         var ex = await Assert.ThrowsAsync<VocdoniApiException>(() => client.PublishVotingProcessAsync("proc1"));
-        Assert.Contains("out of quota", ex.Message);
+        Assert.Equal(40175, ex.Code);
+        Assert.Equal(1980, ex.ErrorData!.Value.GetProperty("requiredCents").GetInt32());
+    }
+
+    [Fact]
+    public async Task DeleteVotingProcess_deletes_the_draft()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, "\"ok\"");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        await client.DeleteVotingProcessAsync("proc1");
+
+        Assert.Equal(HttpMethod.Delete, handler.LastMethod);
+        Assert.Equal("/processes/proc1", handler.LastPath);
+    }
+
+    [Fact]
+    public async Task WaitForJob_reports_completed_failed_and_pending()
+    {
+        var done = new VocdoniClient(ClientWithToken(new SequenceHandler(
+            (HttpStatusCode.OK, """{"status":"pending"}"""),
+            (HttpStatusCode.OK, """{"status":"completed"}""")), "tok")) { PollDelay = TimeSpan.Zero };
+        Assert.Equal((JobState.Completed, null), await done.WaitForJobAsync("j1"));
+
+        var failed = new VocdoniClient(ClientWithToken(new SequenceHandler(
+            (HttpStatusCode.OK, """{"status":"failed","errors":["out of funds","chain down"]}""")), "tok"));
+        Assert.Equal((JobState.Failed, "out of funds; chain down"), await failed.WaitForJobAsync("j1"));
+
+        var stuck = new SequenceHandler((HttpStatusCode.OK, """{"status":"pending"}"""));
+        var pending = new VocdoniClient(ClientWithToken(stuck, "tok")) { PollDelay = TimeSpan.Zero };
+        Assert.Equal((JobState.Pending, null), await pending.WaitForJobAsync("j1"));
+        Assert.Equal(20, stuck.Calls); // bounded poll, then give up without throwing
+    }
+
+    [Fact]
+    public async Task SetProcessEndDate_puts_rfc3339_utc_and_returns_the_job()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.Accepted, """{"jobId":"j9"}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var job = await client.SetProcessEndDateAsync("p1", new DateTimeOffset(2026, 12, 31, 23, 59, 59, 500, TimeSpan.FromHours(2)));
+
+        Assert.Equal("j9", job);
+        Assert.Equal(HttpMethod.Put, handler.LastMethod);
+        Assert.Equal("/processes/p1/endDate", handler.LastPath);
+        Assert.Equal("""{"endDate":"2026-12-31T21:59:59Z"}""", handler.LastBody);
+    }
+
+    [Fact]
+    public async Task GetPrice_forwards_the_voter_count()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK,
+            """{"lines":[{"kind":"base","description":"30 voters","amountCents":1980}],"totalCents":1980,"currency":"eur","quoteRecommended":false,"quoteRequired":false}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        var price = await client.GetPriceAsync(30);
+
+        Assert.Equal((1980, "eur"), (price.TotalCents, price.Currency));
+        Assert.Equal("/pricing?voters=30", handler.LastPathAndQuery);
+    }
+
+    [Fact]
+    public async Task Integrator_address_is_managedBy_of_the_first_managed_org()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK,
+            """{"organizations":[{"address":"0xorg","managedBy":"0xintegrator"}],"pagination":{"currentPage":1,"lastPage":3}}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        Assert.Equal("0xintegrator", await client.GetIntegratorAddressAsync());
+        Assert.Equal("/integrator/organizations?page=1&limit=1", handler.LastPathAndQuery);
+
+        var none = new VocdoniClient(ClientWithToken(new CapturingHandler(HttpStatusCode.OK, """{"organizations":[]}"""), "tok"));
+        Assert.Null(await none.GetIntegratorAddressAsync());
+    }
+
+    [Fact]
+    public async Task Integrator_info_and_wallet_read_their_fields()
+    {
+        var info = await new VocdoniClient(ClientWithToken(new CapturingHandler(HttpStatusCode.OK,
+            """{"enabled":true,"canCreateManagedOrg":false,"managedOrgsCreated":1,"netTopUpCents":0}"""), "tok")).GetIntegratorInfoAsync();
+        Assert.False(info.CanCreateManagedOrg);
+        Assert.Equal(1, info.ManagedOrgsCreated);
+
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"balanceCents":12345,"currency":"eur","history":[]}""");
+        var wallet = await new VocdoniClient(ClientWithToken(handler, "tok")).GetWalletAsync("0xintegrator");
+        Assert.Equal((12345L, "eur"), (wallet.BalanceCents, wallet.Currency));
+        Assert.Equal("/organizations/0xintegrator/wallet?page=1&limit=1", handler.LastPathAndQuery);
+    }
+
+    [Fact]
+    public async Task UpsertMember_sends_only_id_and_password()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"id":"m1"}""");
+        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
+
+        await client.UpsertMemberAsync("0xabc", new VocdoniOrgMember { Id = "m1", Password = new string('a', 64) });
+
+        Assert.Equal(HttpMethod.Put, handler.LastMethod);
+        Assert.Equal("/organizations/0xabc/members", handler.LastPath);
+        Assert.Equal($$"""{"id":"m1","password":"{{new string('a', 64)}}"}""", handler.LastBody);
+    }
+
+    [Fact]
+    public async Task ListMembers_reads_hasPassword()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"members":[{"id":"1","hasPassword":true},{"id":"2"}]}""");
+        var members = await new VocdoniClient(ClientWithToken(handler, "tok")).ListMembersAsync("0xabc");
+
+        Assert.Equal([true, false], members.Select(m => m.HasPassword));
     }
 
     [Fact]
@@ -151,60 +265,6 @@ public class VocdoniClientTests
 
         Assert.Equal(1, handler.Calls);
         Assert.Equal("/processes/proc1/questions/status", Assert.Single(handler.Paths));
-    }
-
-    [Fact]
-    public async Task GetSubscriptionFeatures_reads_plan_features()
-    {
-        var handler = new CapturingHandler(HttpStatusCode.OK,
-            """{"plan":{"features":{"anonymous":true,"overwrite":false}}}""");
-        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
-
-        var features = await client.GetSubscriptionFeaturesAsync("0xabc");
-
-        Assert.True(features.Anonymous);
-        Assert.Equal("/organizations/0xabc/subscription", handler.LastPath);
-    }
-
-    [Fact]
-    public async Task GetSubscriptionFeatures_reads_missing_plan_as_all_off()
-    {
-        var handler = new CapturingHandler(HttpStatusCode.OK, """{"plan":null}""");
-        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
-
-        Assert.False((await client.GetSubscriptionFeaturesAsync("0xabc")).Anonymous);
-    }
-
-    [Fact]
-    public async Task GetSubscriptionFeatures_resolves_via_managed_orgs_and_plans_on_403()
-    {
-        // The subscription read is JWT-only upstream (403/40157 for API keys). Positive confirmation
-        // instead: managed-orgs list carries the org's planId; the public /plans catalog carries the
-        // plan's features. Address matching is case-insensitive (hex).
-        var handler = new SequenceHandler(
-            (HttpStatusCode.Forbidden, """{"error":"API keys are not permitted for this endpoint","code":40157}"""),
-            (HttpStatusCode.OK, """{"organizations":[{"address":"0xABC","subscription":{"planId":"prod_free"}}],"pagination":{"currentPage":1,"lastPage":1}}"""),
-            (HttpStatusCode.OK, """[{"id":"prod_pro","features":{"anonymous":false}},{"id":"prod_free","features":{"anonymous":true}}]"""));
-        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
-
-        var features = await client.GetSubscriptionFeaturesAsync("0xabc");
-
-        Assert.True(features.Anonymous);
-        Assert.Equal(3, handler.Calls);
-        Assert.Equal("/plans", handler.Paths[^1]);
-    }
-
-    [Fact]
-    public async Task GetSubscriptionFeatures_reads_unknown_org_or_plan_as_all_off_on_403()
-    {
-        // Org missing from the managed list ⇒ no planId ⇒ all-off (never optimistic).
-        var handler = new SequenceHandler(
-            (HttpStatusCode.Forbidden, """{"code":40157}"""),
-            (HttpStatusCode.OK, """{"organizations":[{"address":"0xother","subscription":{"planId":"prod_free"}}],"pagination":{"currentPage":1,"lastPage":1}}"""));
-        var client = new VocdoniClient(ClientWithToken(handler, "tok"));
-
-        Assert.False((await client.GetSubscriptionFeaturesAsync("0xabc")).Anonymous);
-        Assert.Equal(2, handler.Calls); // /plans never fetched without a planId
     }
 
     [Fact]
@@ -297,6 +357,7 @@ public class VocdoniClientTests
         public string? LastAuthorization { get; private set; }
         public HttpMethod? LastMethod { get; private set; }
         public string? LastPath { get; private set; }
+        public string? LastPathAndQuery { get; private set; }
         public string? LastBody { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -305,6 +366,7 @@ public class VocdoniClientTests
             LastAuthorization = request.Headers.Authorization?.ToString();
             LastMethod = request.Method;
             LastPath = request.RequestUri?.AbsolutePath;
+            LastPathAndQuery = request.RequestUri?.PathAndQuery;
             LastBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
             return new HttpResponseMessage(code)
             {

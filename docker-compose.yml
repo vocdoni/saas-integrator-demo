@@ -13,7 +13,6 @@ services:
       # browser can't resolve host.docker.internal, so point it at the host-published address.
       Vocdoni__BrowserUrl: ${VOCDONI_BROWSER_URL:-}
       Vocdoni__ApiToken: ${VOCDONI_API_TOKEN:-}
-      Vocdoni__IntegratorAddress: ${VOCDONI_INTEGRATOR_ADDRESS:-}
       # App auth + seeded admin.
       Jwt__SigningKey: ${JWT_SIGNING_KEY:-dev-only-insecure-signing-key-change-me-min-32-chars}
       Admin__Email: ${ADMIN_EMAIL:-admin@hoa.local}

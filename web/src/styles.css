@@ -282,6 +282,13 @@ form {
   gap: 14px;
 }
 
+/* One-line form inside a table cell (Memberbase "Set password"). */
+form.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
 label {
   display: flex;
   flex-direction: column;
@@ -780,6 +787,12 @@ code {
   background: var(--warn-bg);
   color: var(--warn);
   border-color: rgba(154, 106, 26, 0.22);
+}
+
+.s-failed {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: rgba(164, 57, 44, 0.22);
 }
 
 .s-ready {

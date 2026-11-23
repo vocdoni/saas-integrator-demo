@@ -41,13 +41,28 @@ Authorization: Bearer {{ownerToken}}
 GET {{host}}/api/associations/{{assocId}}/homeowners
 Authorization: Bearer {{ownerToken}}
 
-### 6. Owner checks the plan features (gates the anonymous toggle)
-GET {{host}}/api/associations/{{assocId}}/features
+### 5b. Owner sets a homeowner's password. passwordHash is the browser-side
+# hashMemberPassword(orgAddress, password) from @vocdoni/api-client — 64 lowercase hex, never the
+# password itself. 404 unless the id is a current member.
+PUT {{host}}/api/associations/{{assocId}}/homeowners/MEMBER_ID/password
+Content-Type: application/json
 Authorization: Bearer {{ownerToken}}
+
+{ "passwordHash": "0000000000000000000000000000000000000000000000000000000000000000" }
+
+### 6. Owner checks the estimated price (pay-per-process, paid from the integrator wallet; free up to 25 voters)
+GET {{host}}/api/associations/{{assocId}}/price?requirePassword=false
+Authorization: Bearer {{ownerToken}}
+
+### 6b. Admin checks the integrator wallet and whether another association can be created
+GET {{host}}/api/integrator
+Authorization: Bearer {{adminToken}}
 
 ### 7. Owner creates a multi-question proposal (Vocdoni: POST /processes -> publish -> read back)
 # kind = single | multiple | ranked | cumulative (budget + costExponent 1|2).
-# anonymous = blind-CSP voting (plan-gated — see step 6).
+# anonymous = blind-CSP voting; requirePassword = voters also enter their password.
+# 201 + status Open when the publish job finished within ~40 s; 202 + status Draft while it is still
+# running (re-read until Open or Failed); missingData = homeowners left out (e.g. no password).
 # @name createProposal
 POST {{host}}/api/associations/{{assocId}}/proposals
 Content-Type: application/json
@@ -57,6 +72,7 @@ Authorization: Bearer {{ownerToken}}
   "title": "Annual assembly",
   "description": "Two decisions for this year.",
   "anonymous": false,
+  "requirePassword": false,
   "startDate": "2026-06-24T00:00:00Z",
   "endDate": "2026-07-01T00:00:00Z",
   "questions": [
@@ -90,6 +106,21 @@ Authorization: Bearer {{ownerToken}}
 
 { "memberIds": [] }
 
-### 10. Close voting
+### 10. Extend the end date of an open proposal (200 done, 202 still running on chain)
+PUT {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}/end-date
+Content-Type: application/json
+Authorization: Bearer {{ownerToken}}
+
+{ "endDate": "2026-07-08T00:00:00Z" }
+
+### 11. Close voting (Open proposals only, else 409)
 POST {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}/close
+Authorization: Bearer {{ownerToken}}
+
+### 12. Retry the publish of a Failed proposal (adopts already-mined elections at no new charge)
+POST {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}/publish
+Authorization: Bearer {{ownerToken}}
+
+### 13. Delete a proposal stuck publishing (Draft) or Failed — deletes the upstream draft too (409 otherwise)
+DELETE {{host}}/api/associations/{{assocId}}/proposals/{{proposalId}}
 Authorization: Bearer {{ownerToken}}

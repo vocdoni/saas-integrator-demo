@@ -10,8 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@vocdoni/api-client": "^2.0.0",
-    "@vocdoni/api-voting": "^1.1.0",
+    "@vocdoni/api-client": "^2.8.0",
+    "@vocdoni/api-voting": "^1.3.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

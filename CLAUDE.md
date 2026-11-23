@@ -18,21 +18,23 @@ not in this repo.
     Bearer token injected in `Program.cs`), `VocdoniModels.cs` wire DTOs.
   - `Services/Auth/` — JWT issuing. `Data/` — EF Core + SQLite, `DbSeeder` seeds the admin.
   - `Models/`, `Dtos/`, `Migrations/`.
-- `tests/HoaVoting.Tests/` — xUnit; `WebApplicationFactory` integration tests (11 today).
+- `tests/HoaVoting.Tests/` — xUnit: unit tests (`VocdoniClient` over a fake handler, `UpstreamErrors`,
+  mapping) plus controller tests that build controllers directly over SQLite in-memory and a scripted
+  `FakeVocdoniClient` (`ControllerTestBase`). No `WebApplicationFactory`.
 - `web/` — React 19 + Vite SPA, nginx in prod. `src/api.js` = the app API client (JWT bearer);
   `src/voting.js` = **client-side vote casting** via the integrator SDK; `src/status.js` = shared
   `isFinished`; one component per page under `src/components/`.
-- Roots: `e2e.sh`, `create-process.sh` (live-API scripts), `requests.http` (curl flow).
+- Roots: `e2e.sh` (live-API script), `requests.http` (curl flow).
 
 ## Commands
 
 ```bash
 docker compose up --build          # api :5095, web :3000 (proxies /api). Migrates + seeds on boot.
-dotnet test                         # 26 tests. No local .NET? run in a container:
+dotnet test                         # 90 tests. No local .NET? run in a container:
   docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test
 dotnet test --filter <TestName>     # single test
 cd web && npm install && npm run dev # SPA hot reload :5173 (Vite proxies /api → :5095; needs api up)
-cd web && npm test                  # vitest — covers voting.js (batch/blind sign, relay, partial failure)
+cd web && npm test                  # vitest — covers voting.js (batch/blind sign, relay, partial failure, password hash)
 cd web && npm run build             # production bundle (also what the web image builds)
 ./e2e.sh                            # full live flow; VTYPE=single|multiple|ranked; needs .env creds
 ```
@@ -55,14 +57,24 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
 
 - **A proposal = a multi-question process.** `Proposal` (container) has many `ProposalQuestion`s
   (`Models/Proposal.cs`), each mapping 1:1 to an on-chain election. `ProposalsController.Create`
-  authors the whole process (`POST /processes`, census inline over the homeowners), publishes it as
-  one async **batch** (`POST /processes/{id}/publish` → poll `/jobs/{id}`), then reads it back
-  (`GET /processes/{id}`) to capture each question's on-chain `UpstreamId` + `Status`.
+  authors the whole process (`POST /processes`, census inline over the homeowners), **saves the row as
+  `Draft`**, then runs the publish routine `Services/ProposalSync.PublishAsync`: one async **batch**
+  (`POST /processes/{id}/publish` → job id stored on `Proposal.PublishJobId` → bounded ~40 s poll),
+  then reads it back (`GET /processes/{id}`) to capture each question's `UpstreamId` + `Status`.
+- **Publish states (pay-per-process, saas-backend #819).** Publishing debits the integrator wallet and
+  its job can stay pending for hours, so the local row records what upstream did — saved before the
+  call, and every save after an upstream side effect uses `CancellationToken.None`.
+  `ProposalStatus { Draft, Open, Closed, Failed }` (int, append only). Create answers 201 (`Open`), 202
+  (`Draft`, job still running) or 502. A refused publish deletes the upstream draft and the row; if
+  that delete fails the row is `Failed` + `PublishError`. A failed job → `Failed` (never auto-deleted:
+  upstream 409s 40903/40904 once elections were submitted). `DELETE …/proposals/{id}` (Draft/Failed
+  only) and `POST …/proposals/{id}/publish` (retry, Failed only; upstream adopts mined elections at no
+  new charge) resolve stuck rows. Limits: 15 questions, 90 days.
 - **Voting is client-side and batched; the backend never casts or signs.** `web/src/voting.js`
-  `castProcessVotes()` authenticates **once** per process (`client.processes.authStep0`), then signs the
+  `castProcessVotes()` authenticates **once** per process (`client.elections.authStep0`), then signs the
   whole ballot in **one** CSP call — the single fork in the flow (both branches return
   `[{upstreamId, signature, weight, code?, error?}]`, matched by `upstreamId`, never index):
-  `client.processes.signBatch` (saas-backend #634) for a regular census, or `signBlindCspBallots()`
+  `client.elections.signBatch` (saas-backend #634) for a regular census, or `signBlindCspBallots()`
   (blind CSP, #641 — see the anonymous bullet) for an anonymous one. One fresh `EphemeralSigner` per
   question, created *before* signing; envelopes built locally (`buildVoteTransaction`), then out in
   **one** `client.elections.voteBatch()` call (`POST /votes`, saas-backend #610) → **one** job. The
@@ -72,15 +84,29 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   automatic re-sign — it burns the finite overwrite budget), and because a job fails if *any*
   envelope failed, the `jobs.waitFor()` call catches `JobFailedError` to read the outcomes off the
   failed job rather than reporting blanket failure. Bridge to the page: `VotingInfoResponse.ApiUrl`
-  + `ChainId` + `Anonymous`.
+  + `ChainId` + `Anonymous` + `RequirePassword` + `OrgAddress`. (`client.processes` is a deprecated
+  alias of `client.elections` since api-client 2.1.0 — use `elections`.)
 - **Anonymous voting (saas-backend #641, blind CSP).** `CreateProposalRequest.Anonymous` →
   `census.anonymous: true` on the process create → the census swaps to blind signatures
   (`OFF_CHAIN_CA_V2`): the CSP cannot link a voter to a ballot, and votes carry an
   `ECDSA_BLIND_PIDSALTED` proof (`proofType` on `buildVoteTransaction`; the CSP-pinned `weight` must
   be passed back verbatim — it salts the key the chain verifies). Auth and relay are unchanged; the
-  plain sign endpoints 400 on an anonymous census and vice versa. **Plan-gated**: publish fails
-  *async + opaquely* on plans without `features.anonymous`, so the admin form disables the toggle via
-  `GET api/associations/{id}/features` (→ `GET /organizations/{org}/subscription`).
+  plain sign endpoints 400 on an anonymous census and vice versa. On every plan since #718 (the
+  subscription/plan endpoints are gone, #855); a service-wide switch can still refuse it (400 40037),
+  which surfaces as a readable 502.
+- **Member password (saas-backend #760).** `RequirePassword` → census `authFields:
+  ["memberNumber","password"]`; members without one land in `missingData` (returned on create, not
+  stored) and are not added later. The password is hashed **in the browser** with
+  `hashMemberPassword(orgAddress, password)` (`@vocdoni/api-client`) — Memberbase sends the hash to
+  `PUT …/homeowners/{memberId}/password` (the controller checks the member exists first: upstream's
+  upsert creates a phantom member for an unknown id), and the voting page sends it straight to step 0.
+  The backend accepts only `^[0-9a-f]{64}$` and never stores or logs it. A wrong password answers
+  40802 like an unknown member; step 0 is throttled (40017).
+- **Pricing + wallet (saas-backend #819).** `GET api/associations/{id}/price` → `GET /pricing?voters=N`
+  (0 voters answered locally: upstream needs ≥ 1). `GET api/integrator` (admin) → `GET /integrator` +
+  the wallet of the integrator org, whose address is the `managedBy` of its first managed org.
+  Upstream billing/limit codes (40175, 40183, 40184, 40176) become readable sentences in the 502
+  `detail` (`Services/Vocdoni/UpstreamErrors.cs`).
 - **Voting kinds are a cross-cut across four places.** `VotingType`
   (`single|multiple|ranked|cumulative`, `Models/VotingType.cs`, JSON as a camelCase string via
   `JsonStringEnumConverter` in `Program.cs`) → a **named** #638 type in
@@ -105,23 +131,30 @@ docker run --rm -v "$PWD":/src -w /src/src/HoaVoting.Api mcr.microsoft.com/dotne
   `VotingController` deliberately drops them (never public). Only single-choice is supported: the
   backend correlates each vote's selected value with the open choice's value, which only matches
   `votes = [chosenIndex]`.
-- **Async everything via jobs.** Publish, question-status change, vote relay, bulk member add return a
-  `jobId`; the client polls `GET /jobs/{id}` (fail-fast on `failed`). Publish is idempotent (200).
+- **Async everything via jobs.** Publish, end-date change, question-status change, vote relay, bulk
+  member add return a `jobId`. `VocdoniClient.WaitForJobAsync` is a bounded poll (~40 s, under nginx's
+  60 s proxy timeout) returning `Completed | Failed | Pending`; what outlives it is settled by the
+  read-side reconcile. Publish is idempotent (200). End date: `PUT …/proposals/{id}/end-date` →
+  `PUT /processes/{id}/endDate` (saas-backend #844), Open proposals only, extend only.
 - **Status + tally reconcile.** `ProposalsController` List/Get (`HydrateAsync`) + `VotingController`
-  read `GET /processes/{id}` (the process read carries per-question live on-chain `status` always, plus
-  an inline `results` tally — `voteCount` + `maxVoters` + `results` matrix — resolved only once a
-  question hits **`results`** status, saas-backend #596). They refresh each question's `Status`, mark
-  the proposal `Closed` when all questions ended, and pass the inline tallies into the response (matched
-  by `UpstreamId`). Tallies render via `web/src/tally.js` `tallyCounts(results, kind)` +
+  share `ProposalSync.ReconcileAsync` over `GET /processes/{id}` (the process read carries per-question
+  live on-chain `status` always, plus an inline `results` tally — `voteCount` + `maxVoters` + `results`
+  matrix — resolved only once a question hits **`results`** status, saas-backend #596). In order: a
+  `Draft` is promoted to `Open` only by a read that says `published` with every `upstreamId` present,
+  or failed from its stored job; upstream `endDate` is copied; question `Status` refreshed; an `Open`
+  proposal (only) is marked `Closed` when all questions ended or its end date passed. It never deletes;
+  its save tolerates a row deleted meanwhile. The public endpoint 404s `Draft`/`Failed`. Inline
+  tallies go into the response (matched by `UpstreamId`). Tallies render via `web/src/tally.js` `tallyCounts(results, kind)` +
   `QuestionResults.jsx` (single=`results[0]`, multiple=`results[i][1]`, ranked and cumulative =
   index-weighted `Σ results[i][v]·v`; `maxVoters` is the per-question turnout denominator). The public page also derives finished via
   `isFinished`. (The separate `GET /processes/{id}/results` endpoint exists but is unused — its shape
   dropped `status`, which we need every read.)
-- **Auth-only census.** Voters authenticate by **member number** (no 2FA); the process census is
-  inline (`census: { authFields: ["memberNumber"], memberIds }`) — no separate census/group/publish.
+- **Auth-only census.** Voters authenticate by **member number** (plus password when required; no
+  2FA); the process census is inline (`census: { authFields, memberIds }`) — no separate
+  census/group/publish.
 - **`chainId` comes from the process (#582).** The process read (`GET /processes/{id}`) carries the
-  Vochain `chainId` votes must be signed against. `ProposalsController.Create` captures it from the
-  publish read-back onto `Proposal.ChainId`; `VotingController` exposes it to the page for vote
+  Vochain `chainId` votes must be signed against. The publish routine captures it from the
+  read-back onto `Proposal.ChainId`; `VotingController` exposes it to the page for vote
   signing. (There is no `Vocdoni:ChainId` config anymore.)
 
 ## Conventions

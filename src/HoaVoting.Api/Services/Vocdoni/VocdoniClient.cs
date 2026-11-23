@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -8,8 +9,40 @@ namespace HoaVoting.Api.Services.Vocdoni;
 public sealed class VocdoniApiException(HttpStatusCode status, string body)
     : Exception($"Vocdoni API returned {(int)status} {status}: {body}")
 {
+    private readonly (int? Code, string? Error, JsonElement? Data) _parsed = Parse(body);
+
     public HttpStatusCode Status { get; } = status;
     public string Body { get; } = body;
+
+    /// <summary>Upstream <c>errors.Error.code</c> (e.g. 40175); null when the body is not that shape.</summary>
+    public int? Code => _parsed.Code;
+
+    /// <summary>Upstream <c>errors.Error.error</c> text; null when absent.</summary>
+    public string? UpstreamError => _parsed.Error;
+
+    /// <summary>Upstream <c>errors.Error.data</c> (e.g. requiredCents/availableCents); null when absent. Not
+    /// named Data: that would hide Exception.Data.</summary>
+    public JsonElement? ErrorData => _parsed.Data;
+
+    // Best-effort: the body is upstream input, so every read is guarded by ValueKind (JsonElement
+    // getters throw InvalidOperationException on a mismatched kind) and non-JSON yields all-null.
+    private static (int?, string?, JsonElement?) Parse(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return default;
+            int? code = root.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.Number && c.TryGetInt32(out var n) ? n : null;
+            var error = root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null;
+            JsonElement? data = root.TryGetProperty("data", out var d) && d.ValueKind != JsonValueKind.Null ? d.Clone() : null;
+            return (code, error, data);
+        }
+        catch (JsonException)
+        {
+            return default;
+        }
+    }
 }
 
 /// <summary>
@@ -70,31 +103,43 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         SendAsync(HttpMethod.Delete, $"/organizations/{orgAddress}/members",
             new DeleteMembersRequest { Ids = memberIds }, ct);
 
+    /// <summary>PUT /organizations/{org}/members: upsert one member. Fields left null are omitted on the wire
+    /// and keep their stored values. NB: an unused id CREATES a member — callers check it exists first.</summary>
+    public Task UpsertMemberAsync(string orgAddress, VocdoniOrgMember member, CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Put, $"/organizations/{orgAddress}/members", member, ct);
+
     // --- multi-question /processes API (saas-backend #571) -----------------
 
-    /// <summary>Creates a draft voting process (container with N questions); returns its 24-hex ProcessID.</summary>
-    public async Task<string> CreateVotingProcessAsync(CreateVotingProcessRequest request, CancellationToken ct = default)
+    /// <summary>Creates a draft voting process (container with N questions): its 24-hex ProcessID plus
+    /// <c>missingData</c>, the members left out of the census for lacking a required auth field.</summary>
+    public async Task<CreateVotingProcessResponse> CreateVotingProcessAsync(CreateVotingProcessRequest request, CancellationToken ct = default)
     {
         var resp = await SendAsync<CreateVotingProcessResponse>(HttpMethod.Post, "/processes", request, ct);
         if (string.IsNullOrEmpty(resp.ProcessId))
             throw new VocdoniApiException(HttpStatusCode.BadGateway, "POST /processes returned no processId");
-        return resp.ProcessId!;
+        return resp;
     }
 
     /// <summary>
-    /// Publishes every question of a process on-chain as one atomic batch and waits for the job. Each
-    /// question becomes its own election; read the process back to get the per-question upstream ids.
+    /// Starts publishing every question of a process on-chain as one batch (pay-per-process: this is
+    /// the call that debits the wallet). Returns the job id to follow, or null when upstream answered
+    /// 200 (already published). Does not wait: the job can stay pending for minutes to hours.
     /// </summary>
-    public async Task PublishVotingProcessAsync(string processId, CancellationToken ct = default)
+    public async Task<string?> PublishVotingProcessAsync(string processId, CancellationToken ct = default)
     {
         using var resp = await SendCoreAsync(HttpMethod.Post, $"/processes/{processId}/publish", null, ct);
-        if (resp.StatusCode == HttpStatusCode.OK) return; // 200 = already published (idempotent)
+        if (resp.StatusCode == HttpStatusCode.OK) return null; // 200 = already published (idempotent)
 
         var enqueued = await ReadJsonAsync<EnqueuedResponse>(resp, ct);
         if (string.IsNullOrEmpty(enqueued.JobId))
             throw new VocdoniApiException(resp.StatusCode, "publish returned neither a result nor a jobId");
-        await PollJobAsync(enqueued.JobId!, ct);
+        return enqueued.JobId;
     }
+
+    /// <summary>DELETE /processes/{id}: deletes an unpublished draft (credits back a paid one). 409 once
+    /// a publish submitted elections (40903/40904), 404 when already gone.</summary>
+    public Task DeleteVotingProcessAsync(string processId, CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Delete, $"/processes/{processId}", null, ct);
 
     /// <summary>Reads a process fully hydrated — each question carries its on-chain upstreamId + status, and
     /// (saas-backend #596) an inline tally once it reaches "results" status.</summary>
@@ -104,7 +149,7 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
     /// <summary>Changes question status (e.g. "ended"); a null/empty <paramref name="questionIds"/> targets all published questions.</summary>
     // ponytail: fire-and-forget — we enqueue the status change and return without waiting for the
     // async job, so the caller's request stays fast. The real per-question status is reconciled from
-    // GET /processes/{id}/results on the next read (ProposalsController.HydrateAsync). A rejected
+    // GET /processes/{id} on the next read (ProposalSync.ReconcileAsync). A rejected
     // enqueue still surfaces: SendCoreAsync throws VocdoniApiException on any non-2xx.
     public Task SetQuestionsStatusAsync(string processId, string status, List<string>? questionIds = null, CancellationToken ct = default)
     {
@@ -129,58 +174,75 @@ public sealed class VocdoniClient(HttpClient http) : IVocdoniClient
         return resp;
     }
 
-    /// <summary>Reads the org's subscription plan features; a missing plan reads as all-off.
-    /// The subscription endpoint is JWT-only upstream (403 code 40157 for API keys), so on 403 the
-    /// features are positively confirmed the key-compatible way instead: the managed-orgs list
-    /// (managed:read) carries the org's planId, joined with the public /plans catalog.</summary>
-    public async Task<SubscriptionFeatures> GetSubscriptionFeaturesAsync(string orgAddress, CancellationToken ct = default)
+    /// <summary>PUT /processes/{id}/endDate (saas-backend #844): extend every open question's end; returns the job id.</summary>
+    public async Task<string> SetProcessEndDateAsync(string processId, DateTimeOffset endDate, CancellationToken ct = default)
     {
-        try
+        var body = new SetProcessEndDateRequest
         {
-            var info = await SendAsync<OrganizationSubscriptionInfo>(
-                HttpMethod.Get, $"/organizations/{orgAddress}/subscription", null, ct);
-            return info.Plan?.Features ?? new SubscriptionFeatures();
-        }
-        catch (VocdoniApiException e) when (e.Status == HttpStatusCode.Forbidden)
-        {
-            var planId = await FindManagedOrgPlanIdAsync(orgAddress, ct);
-            if (string.IsNullOrEmpty(planId)) return new SubscriptionFeatures();
-            var plans = await SendAsync<List<VocdoniPlan>>(HttpMethod.Get, "/plans", null, ct);
-            return plans.FirstOrDefault(p => string.Equals(p.Id, planId, StringComparison.Ordinal))
-                ?.Features ?? new SubscriptionFeatures();
-        }
+            // RFC 3339 in UTC; upstream truncates to whole seconds anyway.
+            EndDate = endDate.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
+        };
+        var enqueued = await SendAsync<EnqueuedResponse>(HttpMethod.Put, $"/processes/{processId}/endDate", body, ct);
+        return string.IsNullOrEmpty(enqueued.JobId)
+            ? throw new VocdoniApiException(HttpStatusCode.BadGateway, "endDate change returned no jobId")
+            : enqueued.JobId!;
     }
 
-    /// <summary>Walks the paginated managed-orgs list to find one org's subscription planId.</summary>
-    private async Task<string?> FindManagedOrgPlanIdAsync(string orgAddress, CancellationToken ct)
-    {
-        for (var page = 1; ; page++)
-        {
-            var resp = await SendAsync<ManagedOrganizationsResponse>(
-                HttpMethod.Get, $"/integrator/organizations?page={page}&limit=100", null, ct);
-            var org = resp.Organizations.FirstOrDefault(o =>
-                string.Equals(o.Address, orgAddress, StringComparison.OrdinalIgnoreCase));
-            if (org is not null) return org.Subscription?.PlanId;
-            if (resp.Organizations.Count == 0 || resp.Pagination is not { } p || p.CurrentPage >= p.LastPage)
-                return null;
-        }
-    }
+    // --- jobs ----------------------------------------------------------------
 
-    /// <summary>Polls GET /jobs/{id} until the async transaction completes; throws on failure or timeout.</summary>
-    // ponytail: bounded poll (~40s), no webhook available. Move to a background worker for production.
-    private async Task PollJobAsync(string jobId, CancellationToken ct)
+    /// <summary>One non-polling read of GET /jobs/{id} (the reconcile uses it).</summary>
+    public Task<JobStatusResponse> GetJobAsync(string jobId, CancellationToken ct = default) =>
+        SendAsync<JobStatusResponse>(HttpMethod.Get, $"/jobs/{jobId}", null, ct);
+
+    /// <summary>Delay between job polls. Tests set it to zero.</summary>
+    internal TimeSpan PollDelay { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>Polls the job up to 20 times; Pending when it is still running after that. Error = the job's errors joined.</summary>
+    // ponytail: bounded poll (~40 s, under nginx's 60 s proxy timeout), no webhook available. Move to a
+    // background worker for production; until then the read-side reconcile settles what outlives it.
+    public async Task<(JobState State, string? Error)> WaitForJobAsync(string jobId, CancellationToken ct = default)
     {
         for (var attempt = 0; attempt < 20; attempt++)
         {
-            var job = await SendAsync<JobStatusResponse>(HttpMethod.Get, $"/jobs/{jobId}", null, ct);
-            if (job.Status == "completed")
-                return;
-            if (job.Status == "failed")
-                throw new VocdoniApiException(HttpStatusCode.BadGateway, $"job {jobId} failed: {string.Join("; ", job.Errors ?? [])}");
-            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+            if (attempt > 0) await Task.Delay(PollDelay, ct);
+            var job = await GetJobAsync(jobId, ct);
+            if (job.Status == "completed") return (JobState.Completed, null);
+            if (job.Status == "failed") return (JobState.Failed, string.Join("; ", job.Errors ?? []));
         }
-        throw new VocdoniApiException(HttpStatusCode.GatewayTimeout, $"job {jobId} did not complete within the timeout");
+        return (JobState.Pending, null);
     }
+
+    /// <summary>Waits for the job and throws unless it completed (callers that need the outcome inline).</summary>
+    private async Task PollJobAsync(string jobId, CancellationToken ct)
+    {
+        var (state, error) = await WaitForJobAsync(jobId, ct);
+        if (state == JobState.Failed)
+            throw new VocdoniApiException(HttpStatusCode.BadGateway, $"job {jobId} failed: {error}");
+        if (state == JobState.Pending)
+            throw new VocdoniApiException(HttpStatusCode.GatewayTimeout, $"job {jobId} did not complete within the timeout");
+    }
+
+    // --- pricing + integrator wallet (saas-backend #819) -----------------------
+
+    /// <summary>GET /pricing?voters=N — the public pay-per-process calculator (voters ≥ 1).</summary>
+    public Task<ProcessPrice> GetPriceAsync(int voters, CancellationToken ct = default) =>
+        SendAsync<ProcessPrice>(HttpMethod.Get, $"/pricing?voters={voters}", null, ct);
+
+    /// <summary>GET /integrator — whether another managed org may be created now (quota:read).</summary>
+    public Task<IntegratorInfo> GetIntegratorInfoAsync(CancellationToken ct = default) =>
+        SendAsync<IntegratorInfo>(HttpMethod.Get, "/integrator", null, ct);
+
+    /// <summary>The integrator org's address: the <c>managedBy</c> of its first managed org (managed:read);
+    /// null when it manages none yet.</summary>
+    public async Task<string?> GetIntegratorAddressAsync(CancellationToken ct = default)
+    {
+        var resp = await SendAsync<ManagedOrganizationsResponse>(HttpMethod.Get, "/integrator/organizations?page=1&limit=1", null, ct);
+        return resp.Organizations.FirstOrDefault()?.ManagedBy is { Length: > 0 } addr ? addr : null;
+    }
+
+    /// <summary>GET /organizations/{org}/wallet — balance only (one history row requested). quota:read of that org.</summary>
+    public Task<WalletInfo> GetWalletAsync(string orgAddress, CancellationToken ct = default) =>
+        SendAsync<WalletInfo>(HttpMethod.Get, $"/organizations/{orgAddress}/wallet?page=1&limit=1", null, ct);
 
     // --- transport ---------------------------------------------------------
 

@@ -1,4 +1,4 @@
-import { VocdoniApiClient, JobFailedError } from '@vocdoni/api-client'
+import { VocdoniApiClient, JobFailedError, hashMemberPassword } from '@vocdoni/api-client'
 import { buildVoteTransaction, EphemeralSigner, signBlindCspBallots, ProofCA_Type } from '@vocdoni/api-voting'
 
 // Casts ballots on a multi-question voting process (saas-backend #571) entirely through the SaaS API.
@@ -21,16 +21,21 @@ import { buildVoteTransaction, EphemeralSigner, signBlindCspBallots, ProofCA_Typ
 // ranks; cumulative → [v0..vN-1] credit per choice); `memo` is the optional free-text note attached
 // when the open "Other" choice is picked (#577).
 //
+// `password` (only on a password census, saas-backend #760) is the voter's plaintext: it is hashed here
+// with `orgAddress` and only the hash leaves the browser. Omit it on a member-number-only census.
+//
 // Returns one outcome per answered question, in `answers` order:
 //   [{ upstreamId, ok, voteID, error }]
 // A batch rejected synchronously (bad envelope, unknown process, repeated nullifier, queue full)
 // throws instead — nothing was relayed, so the caller can fix and retry safely.
-export async function castProcessVotes({ apiUrl, processId, chainId, memberNumber, anonymous, answers }) {
+export async function castProcessVotes({ apiUrl, processId, chainId, memberNumber, password, orgAddress, anonymous, answers }) {
   const client = new VocdoniApiClient({ apiUrl })
 
   // 1. Auth once per process (identical for anonymous). Auth-only census ⇒ the step-0 token is
-  //    already verified (no OTP).
-  const { authToken } = await client.processes.authStep0(processId, { memberNumber })
+  //    already verified (no OTP). hashMemberPassword throws on a blank password or outside a secure context.
+  const credentials = { memberNumber }
+  if (password != null) credentials.password = await hashMemberPassword(orgAddress, password)
+  const { authToken } = await client.elections.authStep0(processId, credentials)
   if (!authToken) throw new Error('Authentication failed — check your member number.')
 
   // 2. One fresh ephemeral identity per question, created BEFORE signing: the address is inside the
@@ -42,7 +47,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
   //    election id — both endpoints are process-scoped.
   const signatures = anonymous
     ? await signBlindCspBallots({ processId, authToken, client, ballots })
-    : (await client.processes.signBatch(processId, { authToken, ballots })).signatures
+    : (await client.elections.signBatch(processId, { authToken, ballots })).signatures
   const byUpstream = new Map((signatures ?? []).map((s) => [s.upstreamId, s]))
 
   // 4. Build envelopes for the signed ballots; sign failures turn into outcome rows below.
@@ -70,7 +75,7 @@ export async function castProcessVotes({ apiUrl, processId, chainId, memberNumbe
     })
   })
 
-  // 5. Relay in one call — but only when something was signed. A process caps at 100 questions and a
+  // 5. Relay in one call — but only when something was signed. A process caps at 15 questions and a
   //    batch at 100 votes, so a full ballot always fits — no chunking needed.
   let votes = []
   if (envelopes.length > 0) {

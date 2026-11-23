@@ -3,12 +3,32 @@ import { api } from '../api.js'
 
 const short = (s) => (s ? `${s.slice(0, 8)}…${s.slice(-4)}` : '')
 
+// Integrator wallet + managed-org cap (saas-backend #819). info: null = loading, false = unavailable.
+function IntegratorStatus({ info }) {
+  if (info === null) return null
+  if (info === false) return <p className="helper">Integrator status unavailable.</p>
+  const n = info.managedOrgsCreated
+  return (
+    <>
+      <p className="helper">
+        Integrator wallet: <b>{info.balanceCents == null ? 'unavailable' : `€${(info.balanceCents / 100).toFixed(2)}`}</b>
+        {' · '}
+        {n} association{n === 1 ? '' : 's'} created
+      </p>
+      {!info.canCreateManagedOrg && (
+        <div className="error">Top up the integrator wallet in the Vocdoni portal before creating another association.</div>
+      )}
+    </>
+  )
+}
+
 export default function AdminPage() {
   const [assocs, setAssocs] = useState([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ name: '', ownerEmail: '', ownerPassword: '' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [integrator, setIntegrator] = useState(null)
 
   async function load() {
     setLoading(true)
@@ -20,8 +40,11 @@ export default function AdminPage() {
       setLoading(false)
     }
   }
+  // Separate from load(): a failing integrator read must not block the associations list.
+  const loadIntegrator = () => api('/integrator').then(setIntegrator).catch(() => setIntegrator(false))
   useEffect(() => {
     load()
+    loadIntegrator()
   }, [])
 
   async function create(e) {
@@ -32,6 +55,7 @@ export default function AdminPage() {
       await api('/associations', { method: 'POST', body: form })
       setForm({ name: '', ownerEmail: '', ownerPassword: '' })
       await load()
+      loadIntegrator()
     } catch (e) {
       setError(e.message)
     } finally {
@@ -40,7 +64,7 @@ export default function AdminPage() {
   }
 
   async function remove(a) {
-    if (!confirm(`Permanently delete "${a.name}"?\n\nThis deletes the association, its proposals and owner login, and the Vocdoni organization (members, censuses, processes), reclaiming integrator quota. Close any active voting processes first. This cannot be undone.`))
+    if (!confirm(`Permanently delete "${a.name}"?\n\nThis deletes the association, its proposals and owner login, and the Vocdoni organization (members, censuses, processes). Close any active voting processes first. This cannot be undone.`))
       return
     setError('')
     try {
@@ -72,6 +96,7 @@ export default function AdminPage() {
           <button disabled={busy}>{busy ? 'Creating…' : 'Create association'}</button>
         </form>
         <p className="helper">Creates a Vocdoni managed organization and an owner login that can manage it.</p>
+        <IntegratorStatus info={integrator} />
       </section>
 
       <section className="card">

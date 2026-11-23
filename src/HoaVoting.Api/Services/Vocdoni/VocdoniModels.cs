@@ -34,6 +34,14 @@ public sealed class VocdoniOrgMember
 
     /// <summary>Census weight (string per the API).</summary>
     public string? Weight { get; set; }
+
+    /// <summary>Write-only (saas-backend #760): the 64-lowercase-hex client hash of the member's password,
+    /// computed in the browser (hashMemberPassword). Never returned; null ⇒ omitted ⇒ kept on upsert.</summary>
+    public string? Password { get; set; }
+
+    /// <summary>Read-only: whether the member has a password. Not sent on writes.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HasPassword { get; set; }
 }
 
 public sealed class AddMembersRequest
@@ -158,6 +166,8 @@ public sealed class EligibilitySpec
 public sealed class CreateVotingProcessResponse
 {
     public string? ProcessId { get; set; }
+    /// <summary>Members left out of the census for missing a required auth field (e.g. no password).</summary>
+    public List<string>? MissingData { get; set; }
 }
 
 /// <summary>GET /processes/{id} — fully hydrated; questions carry upstreamId + status after publish.</summary>
@@ -235,6 +245,8 @@ public sealed class EnqueuedResponse
     public string? JobId { get; set; }
 }
 
+public enum JobState { Completed, Failed, Pending }
+
 /// <summary>db.JobStatus of an async transaction job (publish, status change, vote relay).</summary>
 public sealed class JobStatusResponse
 {
@@ -262,26 +274,42 @@ public sealed class UpdateQuestionCensusResponse
     public int Removed { get; set; }
 }
 
-// --- organization subscription (plan feature gating) ------------------------
-
-/// <summary>Subset of GET /organizations/{org}/subscription we read.</summary>
-public sealed class OrganizationSubscriptionInfo
+public sealed class SetProcessEndDateRequest
 {
-    public SubscriptionPlan? Plan { get; set; }
+    /// <summary>RFC 3339.</summary>
+    public string EndDate { get; set; } = "";
 }
 
-public sealed class SubscriptionPlan
+// --- pricing + integrator wallet (saas-backend #819) ---------------------------
+
+/// <summary>GET /pricing — EUR cents, VAT excluded. totalCents 0 with quoteRequired is "no price", not free.</summary>
+public sealed class ProcessPrice
 {
-    public SubscriptionFeatures? Features { get; set; }
+    public int TotalCents { get; set; }
+    /// <summary>Lowercase ISO code, e.g. "eur".</summary>
+    public string? Currency { get; set; }
+    public List<PriceLine>? Lines { get; set; }
+    public bool QuoteRecommended { get; set; }
+    public bool QuoteRequired { get; set; }
 }
 
-public sealed class SubscriptionFeatures
+public sealed class PriceLine
 {
-    /// <summary>Gates blind-CSP (and zk) anonymous elections. Publish fails asynchronously without it.</summary>
-    public bool Anonymous { get; set; }
+    public string? Kind { get; set; }
+    public string? Description { get; set; }
+    public int AmountCents { get; set; }
 }
 
-/// <summary>Subset of GET /integrator/organizations (paginated) we read: each managed org's planId.</summary>
+/// <summary>GET /integrator.</summary>
+public sealed class IntegratorInfo
+{
+    public bool Enabled { get; set; }
+    public bool CanCreateManagedOrg { get; set; }
+    public int ManagedOrgsCreated { get; set; }
+    public long NetTopUpCents { get; set; }
+}
+
+/// <summary>Subset of GET /integrator/organizations (paginated) we read.</summary>
 public sealed class ManagedOrganizationsResponse
 {
     public List<ManagedOrganizationInfo> Organizations { get; set; } = new();
@@ -291,17 +319,13 @@ public sealed class ManagedOrganizationsResponse
 public sealed class ManagedOrganizationInfo
 {
     public string? Address { get; set; }
-    public ManagedOrgSubscription? Subscription { get; set; }
+    /// <summary>The integrator org that manages this one (hex).</summary>
+    public string? ManagedBy { get; set; }
 }
 
-public sealed class ManagedOrgSubscription
+/// <summary>GET /organizations/{org}/wallet — the balance part.</summary>
+public sealed class WalletInfo
 {
-    public string? PlanId { get; set; }
-}
-
-/// <summary>Subset of the public GET /plans catalog: plan id (matches subscription.planId) + features.</summary>
-public sealed class VocdoniPlan
-{
-    public string? Id { get; set; }
-    public SubscriptionFeatures? Features { get; set; }
+    public long BalanceCents { get; set; }
+    public string? Currency { get; set; }
 }
