@@ -56,8 +56,11 @@ public class ProposalsController(AppDbContext db, IVocdoniClient vocdoni) : ApiC
             Questions = req.Questions.Select(ToQuestionRequest).ToList(),
         };
 
-        var processId = await vocdoni.CreateVotingProcessAsync(request, ct);
-        await vocdoni.PublishVotingProcessAsync(processId, ct);
+        var processId = (await vocdoni.CreateVotingProcessAsync(request, ct)).ProcessId!;
+        // Interim (Task 5 replaces this with the publish routine): today's wait-then-read behaviour.
+        if (await vocdoni.PublishVotingProcessAsync(processId, ct) is { } jobId
+            && await vocdoni.WaitForJobAsync(jobId, ct) is var (state, jobError) && state != JobState.Completed)
+            throw new VocdoniApiException(System.Net.HttpStatusCode.BadGateway, $"publish job {state}: {jobError}");
         // Read back to capture each question's on-chain id + status (assigned during the batch publish).
         var published = await vocdoni.GetVotingProcessAsync(processId, ct);
 
