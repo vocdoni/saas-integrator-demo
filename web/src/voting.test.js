@@ -15,6 +15,7 @@ const h = vi.hoisted(() => {
     JobFailedError,
     signerCount: 0,
     authStep0: vi.fn(),
+    hashMemberPassword: vi.fn(),
     signBatch: vi.fn(),
     signBlindCspBallots: vi.fn(),
     voteBatch: vi.fn(),
@@ -23,11 +24,12 @@ const h = vi.hoisted(() => {
   }
 })
 
+// Only `elections`: `processes` is a deprecated alias since api-client 2.1.0, so using it fails here.
 vi.mock('@vocdoni/api-client', () => ({
   JobFailedError: h.JobFailedError,
+  hashMemberPassword: h.hashMemberPassword,
   VocdoniApiClient: class {
-    processes = { authStep0: h.authStep0, signBatch: h.signBatch }
-    elections = { voteBatch: h.voteBatch }
+    elections = { authStep0: h.authStep0, signBatch: h.signBatch, voteBatch: h.voteBatch }
     jobs = { waitFor: h.waitFor }
   },
 }))
@@ -58,12 +60,13 @@ const SIGNED = [
   { upstreamId: 'q3', signature: 'sig3', weight: '0x3' },
 ]
 
-const cast = (answers = ANSWERS, { anonymous = false } = {}) =>
+const cast = (answers = ANSWERS, { anonymous = false, password } = {}) =>
   castProcessVotes({
     apiUrl: 'https://api.test',
     processId: 'p1',
     chainId: 'vocdoni-test-1',
     memberNumber: '42',
+    ...(password === undefined ? {} : { password, orgAddress: '0xorg' }),
     anonymous,
     answers,
   })
@@ -74,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.signerCount = 0
   h.authStep0.mockResolvedValue({ authToken: 'tok' })
+  h.hashMemberPassword.mockResolvedValue('ab'.repeat(32))
   h.signBatch.mockResolvedValue({ signatures: SIGNED })
   h.signBlindCspBallots.mockResolvedValue(SIGNED)
   h.buildVoteTransaction.mockImplementation((o) => `tx-${o.processId}`)
@@ -105,6 +109,27 @@ describe('castProcessVotes', () => {
       ],
     })
     expect(h.signBlindCspBallots).not.toHaveBeenCalled()
+  })
+
+  it('sends no password without one', async () => {
+    await cast()
+
+    expect(h.authStep0.mock.calls[0][1]).not.toHaveProperty('password')
+    expect(h.hashMemberPassword).not.toHaveBeenCalled()
+  })
+
+  it('hashes the password with the org address and sends only the hash to step 0', async () => {
+    await cast(ANSWERS, { password: 'correct horse' })
+
+    expect(h.hashMemberPassword).toHaveBeenCalledWith('0xorg', 'correct horse')
+    expect(h.authStep0).toHaveBeenCalledWith('p1', { memberNumber: '42', password: 'ab'.repeat(32) })
+  })
+
+  it('does not authenticate when hashing fails (blank password, insecure context)', async () => {
+    h.hashMemberPassword.mockRejectedValue(new Error('empty password'))
+
+    await expect(cast(ANSWERS, { password: ' ' })).rejects.toThrow('empty password')
+    expect(h.authStep0).not.toHaveBeenCalled()
   })
 
   it('relays the whole ballot in exactly one batch, in answers order', async () => {
